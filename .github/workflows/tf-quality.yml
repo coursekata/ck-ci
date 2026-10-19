@@ -126,10 +126,6 @@ jobs:
         with:
           extra-args: --all-files
 
-  # The committed-secret gate. Scans the whole commit graph, not the tip: a secret that was
-  # committed and later deleted is still disclosed to anyone who can clone, so a working-tree
-  # scan would call that repo clean. Confirmed false positives are suppressed per-finding in the
-  # caller's .gitleaksignore (an auditable fingerprint), never by narrowing the scan.
   # var.testing configures the aws provider offline (dummy creds, skipped STS) so a root plans
   # without credentials. Shipped enabled it would disarm the account-guard preamble, whose whole job
   # is to fail a plan run under the wrong credential — it would fail open, silently. Scans the whole
@@ -153,66 +149,6 @@ jobs:
           fi
           echo "no committed testing=true"
 
-  secrets:
-    needs: [preflight]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # the default shallow clone would scan a single commit
-
-      - name: Install gitleaks
-        run: |
-          # Version resolved by preflight from the hook's own rev, so this cannot drift from the
-          # hook that runs the binary. Checksum from the release, so neither needs recomputing.
-          ver="${{ needs.preflight.outputs.gitleaks_version }}"
-          tgz="gitleaks_${ver}_linux_x64.tar.gz"
-          base="https://github.com/gitleaks/gitleaks/releases/download/v${ver}"
-          cd /tmp
-          curl -fsSLO "${base}/${tgz}"
-          curl -fsSLO "${base}/gitleaks_${ver}_checksums.txt"
-          grep " ${tgz}$" "gitleaks_${ver}_checksums.txt" | sha256sum -c -
-          tar -xzf "${tgz}" gitleaks
-          sudo install gitleaks /usr/local/bin/gitleaks
-
-      - name: Scan the full history for committed secrets
-        # --verbose so a failure names the file, commit, rule and fingerprint. Without it the job
-        # reports only a count, and the author cannot tell what to rotate or what to suppress
-        # without re-running the scan locally. --redact keeps the matched value out of the log.
-        #
-        # This reads every ref the checkout fetched, not just the PR: a secret on any branch is
-        # disclosed to anyone who can clone, so it should fail the repo, not just its own PR.
-        run: gitleaks git --redact --verbose --no-banner
-
-  # The dependency-CVE gate. Bites wherever a caller declares a lockfile; repos that carry none
-  # pass trivially, which is what keeps this uniform across the org — a repo that later grows a
-  # lockfile is gated the day it lands rather than the day someone remembers to wire it up.
-  vuln:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-
-      - name: Gate on known-vulnerable dependencies
-        # --severity HIGH,CRITICAL: the floor a merge should block on. Gating on MEDIUM across a
-        # transitive tree trains people to wave the check through, which costs more than it buys.
-        # --ignore-unfixed: a CVE with no released fix has no action a PR author can take, and a
-        # gate nobody can clear is a gate that gets switched off.
-        # --skip-dirs: vendored Terraform modules ship Terratest fixtures with their own go.mod —
-        # not our dependency tree, and present only where a root has been init'd, so they would
-        # make the result depend on whether someone had run tofu init. This is the only skip that
-        # earns its place; anything broader would narrow the gate for no measured benefit.
-        #
-        # Known limitation: trivy suppresses dev/test dependency groups here. --include-dev-deps
-        # would not help — it covers npm/yarn/gradle only, not uv — so a vulnerable dev-group
-        # dependency is not gated today.
-        run: |
-          trivy fs --scanners vuln \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --skip-dirs '**/.terraform' \
-            --exit-code 1 \
-            --no-progress \
-            .
+  # The general bar: the full-history secret scan and the CVE scan.
+  scan:
+    uses: ./.github/workflows/quality.yml
