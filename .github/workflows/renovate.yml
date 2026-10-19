@@ -1,4 +1,4 @@
-name: tf-renovate
+name: renovate
 
 # Reusable self-hosted Renovate for the IaC fleet. Runs in the CALLER's context on the caller's
 # GITHUB_TOKEN, so each repo keeps its own scoped credential and the pull requests it opens arrive
