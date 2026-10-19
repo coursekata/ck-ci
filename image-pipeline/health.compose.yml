@@ -1,0 +1,10 @@
+# The health run's only service: the image under check, with no mounts and no
+# network, so its code holds none of the job's credentials, files or outputs. Its
+# health check probes it over loopback, which needs no network. Docker's default
+# capabilities stay: an entrypoint that takes ownership of its files or switches user
+# needs them, and they are what the BuildKit tests run with.
+services:
+  candidate:
+    image: ${IMAGE_REF:?IMAGE_REF is required}
+    pull_policy: never
+    network_mode: none

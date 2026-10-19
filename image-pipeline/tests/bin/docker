@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Fake docker. Logs each call; `login` also logs what arrived on stdin.
+#
+# `buildx imagetools` answers from a registry kept in $FAKE_STATE/registry, one
+# "<ref> <digest>" line per reference, the last line winning, and from
+# $FAKE_STATE/registry-errors, "<ref> <message>" lines for references that fail. A
+# reference in neither is not found, in buildx's words. `inspect --raw` prints
+# $FAKE_STATE/manifest, or one OCI image manifest. `create` lands each tag on the
+# source's digest, or on $FAKE_STATE/copy-lands-as. Without --prefer-index=false it
+# lands on another digest, as buildx wraps a single image manifest in a new index.
+#
+# `buildx bake` logs the environment it ran under, prints $FAKE_STATE/bake-print for
+# --print and $FAKE_STATE/bake-log as its build output, copies
+# $FAKE_STATE/metadata.json to its --metadata-file, and exits with
+# $FAKE_STATE/bake-status (default 0). The tests name the build secret's variable
+# GITHUB_TOKEN, a name bake files often read a registry token from.
+#
+# bake runs under env -i, which keeps HOME but not FAKE_STATE, so the tests make the
+# state directory HOME too.
+set -euo pipefail
+FAKE_STATE=${FAKE_STATE:-$HOME}
+case "$*" in
+  login*)
+    echo "docker $* <$(cat)>" >>"$FAKE_STATE/calls"
+    exit 0
+    ;;
+esac
+echo "docker $*" >>"$FAKE_STATE/calls"
+case "${1:-}" in
+  version)
+    # version --format '{{.Server.Os}}/{{.Server.Arch}}': the runner's platform.
+    cat "$FAKE_STATE/platform" 2>/dev/null || echo linux/amd64
+    exit 0
+    ;;
+  image)
+    # image inspect --format <template> <ref>: the image's health check test as JSON,
+    # from $FAKE_STATE/healthcheck, or nothing when the image declares none.
+    cat "$FAKE_STATE/healthcheck" 2>/dev/null || true
+    exit 0
+    ;;
+  compose)
+    # Logs the image compose was given; `up` exits with $FAKE_STATE/compose-status.
+    echo "compose-env image=[${IMAGE_REF:-}]" >>"$FAKE_STATE/calls"
+    case " $* " in
+      *" up "*) exit "$(cat "$FAKE_STATE/compose-status" 2>/dev/null || echo 0)" ;;
+      *" logs "*) echo "candidate-1  | the service's last words" ;;
+    esac
+    exit 0
+    ;;
+esac
+[ "${1:-}" = buildx ] || exit 0
+
+lookup() {
+  local msg
+  if [ -f "$FAKE_STATE/registry-errors" ] &&
+    msg=$(awk -v r="$1" '$1 == r { sub(/^[^ ]+ /, ""); print; found = 1; exit } END { exit !found }' "$FAKE_STATE/registry-errors"); then
+    echo "$msg" >&2
+    return 1
+  fi
+  if [ -f "$FAKE_STATE/registry" ] &&
+    awk -v r="$1" '$1 == r { d = $2 } END { if (d == "") exit 1; print d }' "$FAKE_STATE/registry"; then
+    return 0
+  fi
+  echo "ERROR: $1: not found" >&2
+  return 1
+}
+
+case "${2:-}" in
+  imagetools)
+    case "${3:-}" in
+      inspect)
+        if [ "${4:-}" = --raw ]; then
+          if [ -f "$FAKE_STATE/manifest" ]; then
+            cat "$FAKE_STATE/manifest"
+          else
+            echo '{"mediaType": "application/vnd.oci.image.manifest.v1+json"}'
+          fi
+          exit 0
+        fi
+        # inspect --format '{{json .Manifest}}' <ref>
+        digest=$(lookup "${!#}")
+        jq -nc --arg d "$digest" '{mediaType: "application/vnd.oci.image.manifest.v1+json", digest: $d, size: 1}'
+        ;;
+      create)
+        # create [--prefer-index=false] --tag <ref>... <source>
+        shift 3
+        flat=false
+        tags=()
+        while [ $# -gt 1 ]; do
+          case "$1" in
+            --prefer-index=false) flat=true; shift ;;
+            --tag) tags+=("$2"); shift 2 ;;
+            *) echo "fake docker does not handle imagetools create $1" >&2; exit 2 ;;
+          esac
+        done
+        landed=$(lookup "$1")
+        $flat || landed="sha256:$(printf '%064x' 3735928559)"
+        if [ -f "$FAKE_STATE/copy-lands-as" ]; then landed=$(cat "$FAKE_STATE/copy-lands-as"); fi
+        for t in "${tags[@]}"; do echo "$t $landed" >>"$FAKE_STATE/registry"; done
+        ;;
+      *)
+        echo "fake docker does not handle: $*" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  bake)
+    echo "bake-env aws=[${AWS_SECRET_ACCESS_KEY:-}] builder=[${BUILDX_BUILDER:-}] lookup=[${BUILDX_BAKE_DISABLE_VARS_ENV_LOOKUP:-}] token=[${GITHUB_TOKEN:-}]" >>"$FAKE_STATE/calls"
+    meta="" print=false
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --metadata-file) meta=$2; shift 2 ;;
+        --print) print=true; shift ;;
+        *) shift ;;
+      esac
+    done
+    if $print; then cat "$FAKE_STATE/bake-print"; fi
+    if [ -f "$FAKE_STATE/bake-log" ]; then cat "$FAKE_STATE/bake-log"; fi
+    if [ -n "$meta" ] && [ -f "$FAKE_STATE/metadata.json" ]; then cp "$FAKE_STATE/metadata.json" "$meta"; fi
+    exit "$(cat "$FAKE_STATE/bake-status" 2>/dev/null || echo 0)"
+    ;;
+esac

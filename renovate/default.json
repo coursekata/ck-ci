@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "America/Los_Angeles",
+  "minimumReleaseAge": "7 days",
+  "enabledManagers": ["terraform", "pre-commit", "custom.regex"],
+  "pre-commit": {
+    "description": "Ships disabled; enabledManagers alone does not turn it on.",
+    "enabled": true
+  },
+  "major": {
+    "description": "Majors wait for a human on the dependency dashboard.",
+    "dependencyDashboardApproval": true
+  },
+  "packageRules": [
+    {
+      "description": "One pull request per run for the ordinary updates. Each merge that touches a deploy path costs a pipeline execution and an MFA approval, and a CodePipeline stage lock means a second merge cannot be drained until the first is approved and applied — so the cost of review is per-PR, not per-dependency. Majors are excluded and stay individually reviewable.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
+      "groupName": "non-major dependencies"
+    },
+    {
+      "description": "Pre-1.0 minors can break, and Renovate still classes them minor, so the major gate above misses them. Ungrouped deliberately: bundled into the batch, one 0.x dependency would hold the whole group behind an approval. Not enabled:false — that is evaluated before updateType exists, so pairing it with matchUpdateTypes silently never matches.",
+      "matchCurrentValue": "/^v?0\\./",
+      "matchUpdateTypes": ["minor", "major"],
+      "groupName": null,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "renovatebot/pre-commit-hooks publishes several releases a day, so something has always just cleared the seven-day soak and there is permanently an open pull request for it — merging faster never catches up. The hook only validates a Renovate config file, so nothing downstream needs it current to the hour; it batches monthly instead. Ungrouped so the schedule applies to it rather than to whatever else shares its group.",
+      "matchPackageNames": ["renovatebot/pre-commit-hooks"],
+      "groupName": null,
+      "schedule": ["* * 1 * *"]
+    }
+  ]
+}

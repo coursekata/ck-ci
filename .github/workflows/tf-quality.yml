@@ -1,0 +1,218 @@
+name: tf-quality
+
+# Reusable quality + security gate for the org's OpenTofu repos. A caller adds a small job that
+# `uses:` this workflow. Bump a tool version here once and every consuming repo inherits it. A
+# reusable-workflow call succeeds only if every job in it succeeds, so a caller's existing
+# `ci-passed` gate picks up jobs added here without touching its branch ruleset.
+#
+# Two parity models live here, deliberately:
+#   * `tofu` runs the SAME pre-commit hooks developers run locally (via prek), so remote CI and
+#     local pre-commit stay in lockstep from a single definition.
+#   * `secrets` and `vuln` are CI-only by necessity — a pre-commit hook sees the working tree,
+#     never the commit graph, so a full-history secret scan cannot be expressed as one. Repos
+#     also carry a local gitleaks hook, but it PREVENTS (staged diff, bypassable with
+#     --no-verify) where this GATES (full history, unbypassable).
+#
+# Credential-free: tofu test drives an offline provider, validate runs with -backend=false, and
+# the scanners read only the checkout (trivy fetches its public vulnerability DB).
+# Actions are pinned to full commit SHAs; Dependabot in this repo keeps them current.
+
+on:
+  workflow_call:
+    inputs:
+      tofu_version:
+        description: "OpenTofu version to install (match the caller's .opentofu-version)."
+        type: string
+        default: "1.12.2" # bump manually (not a Dependabot-tracked ecosystem)
+
+permissions:
+  contents: read
+
+# Tools installed through an action float: the action resolves the latest release and Dependabot
+# keeps the action itself current, so there is nothing here to rot. The two raw downloads below
+# are the exception — a checksum only means something against a known version, so those stay
+# pinned and are bumped with their checksum together.
+#
+# gitleaks is a pinned binary rather than gitleaks/gitleaks-action deliberately: that action needs
+# a GITLEAKS_LICENSE secret for organization-owned repos, which this workflow cannot hold without
+# giving up being credential-free and plumbing a secret through every caller. It is also a
+# run-action, so it would not put gitleaks on PATH for the hook the `tofu` job runs.
+jobs:
+  # Fails fast, by name, on the one thing this workflow needs from a caller that is not obvious
+  # from calling it: the gitleaks version comes from the caller's own hook rev, so a repo without
+  # that entry would otherwise die deep inside an install step. Resolving it once here also keeps
+  # the parse out of the two jobs that consume it.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      gitleaks_version: ${{ steps.contract.outputs.gitleaks_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the caller meets this workflow's contract
+        id: contract
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+
+          [ -f .pre-commit-config.yaml ] || fail \
+            "tf-quality.yml runs your hooks with prek, so it needs .pre-commit-config.yaml at the repo root. This repo has none."
+
+          ver=$(awk '/gitleaks\/gitleaks/{f=1} f&&/rev:/{gsub(/[v"]/,"",$2); print $2; exit}' .pre-commit-config.yaml)
+          [ -n "$ver" ] || fail \
+            "tf-quality.yml installs the gitleaks binary that the gitleaks-system hook resolves from PATH, and it takes the version from your .pre-commit-config.yaml so the two cannot drift. Add a 'repo: https://github.com/gitleaks/gitleaks' entry with a 'rev:' — see ck-tf-modules' own config for the shape."
+
+          echo "gitleaks_version=$ver" >> "$GITHUB_OUTPUT"
+          echo "contract ok — gitleaks $ver"
+
+  tofu:
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Ban the HCL constructs that turn a plan into arbitrary code execution — an `external` data
+      # source, a `provisioner` block, or a provider `endpoints` override — before anything below
+      # inits and runs provider code. This precedes the tool installs and the prek run, and a failing
+      # step halts the job, so `tofu init` never runs on a PR that introduces one. A pre-commit hook
+      # cannot provide this: prek runs every hook regardless of another's failure, so it can warn but
+      # not gate. None of these has a legitimate use in the org's roots, so the check is near-free.
+      - name: Ban plan-time code-execution constructs
+        run: |
+          mapfile -t files < <(git ls-files '*.tf')
+          if [ "${#files[@]}" -gt 0 ] && hits=$(grep -nHE \
+            'data[[:space:]]+"external"|provisioner[[:space:]]+"|(^|[[:space:]])endpoints[[:space:]]*[={]' \
+            "${files[@]}"); then
+            echo "::error::Disallowed plan-time code-execution construct (external data source / provisioner / provider endpoints override):"
+            echo "$hits"
+            exit 1
+          fi
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ inputs.tofu_version }}
+          tofu_wrapper: false
+
+      - name: Install tflint
+        uses: terraform-linters/setup-tflint@1cf010d3c7aef302051ccdb68c14c5dc2efa34ef # v6.3.1
+
+      - name: Install trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+
+
+      - name: Install gitleaks
+        # The gitleaks-system hook resolves gitleaks from PATH (matching how every other tool in
+        # this bar is provided); the golang-language variant would build it from source instead.
+        run: |
+          # Version resolved by preflight from the hook's own rev, so this cannot drift from the
+          # hook that runs the binary. Checksum from the release, so neither needs recomputing.
+          ver="${{ needs.preflight.outputs.gitleaks_version }}"
+          tgz="gitleaks_${ver}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${ver}"
+          cd /tmp
+          curl -fsSLO "${base}/${tgz}"
+          curl -fsSLO "${base}/gitleaks_${ver}_checksums.txt"
+          grep " ${tgz}$" "gitleaks_${ver}_checksums.txt" | sha256sum -c -
+          tar -xzf "${tgz}" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+
+      - name: Run the quality bar
+        uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+        env:
+          # tflint --init fetches plugin metadata from the GitHub API; anonymous is 60/hr shared
+          # across the runner's IP. Ambient run token, not a secret a caller has to supply.
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          extra-args: --all-files
+
+  # The committed-secret gate. Scans the whole commit graph, not the tip: a secret that was
+  # committed and later deleted is still disclosed to anyone who can clone, so a working-tree
+  # scan would call that repo clean. Confirmed false positives are suppressed per-finding in the
+  # caller's .gitleaksignore (an auditable fingerprint), never by narrowing the scan.
+  # var.testing configures the aws provider offline (dummy creds, skipped STS) so a root plans
+  # without credentials. Shipped enabled it would disarm the account-guard preamble, whose whole job
+  # is to fail a plan run under the wrong credential — it would fail open, silently. Scans the whole
+  # repo rather than named directories so it works in a modules repo with no environments/ tree; a
+  # repo with no var.testing passes trivially, the same way the dependency-CVE gate does.
+  testing-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: var.testing must never ship enabled
+        run: |
+          hits=$(grep -rEn --include='*.tf' --include='*.tfvars' \
+                   'testing[[:space:]]*=[[:space:]]*true' . \
+                 | grep -v '/tests/' | grep -v '/\.terraform/' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::var.testing must never be true in committed config — it weakens the provider and disarms account-guard. Tests set it in tests/ only."
+            exit 1
+          fi
+          echo "no committed testing=true"
+
+  secrets:
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the default shallow clone would scan a single commit
+
+      - name: Install gitleaks
+        run: |
+          # Version resolved by preflight from the hook's own rev, so this cannot drift from the
+          # hook that runs the binary. Checksum from the release, so neither needs recomputing.
+          ver="${{ needs.preflight.outputs.gitleaks_version }}"
+          tgz="gitleaks_${ver}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${ver}"
+          cd /tmp
+          curl -fsSLO "${base}/${tgz}"
+          curl -fsSLO "${base}/gitleaks_${ver}_checksums.txt"
+          grep " ${tgz}$" "gitleaks_${ver}_checksums.txt" | sha256sum -c -
+          tar -xzf "${tgz}" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+
+      - name: Scan the full history for committed secrets
+        # --verbose so a failure names the file, commit, rule and fingerprint. Without it the job
+        # reports only a count, and the author cannot tell what to rotate or what to suppress
+        # without re-running the scan locally. --redact keeps the matched value out of the log.
+        #
+        # This reads every ref the checkout fetched, not just the PR: a secret on any branch is
+        # disclosed to anyone who can clone, so it should fail the repo, not just its own PR.
+        run: gitleaks git --redact --verbose --no-banner
+
+  # The dependency-CVE gate. Bites wherever a caller declares a lockfile; repos that carry none
+  # pass trivially, which is what keeps this uniform across the org — a repo that later grows a
+  # lockfile is gated the day it lands rather than the day someone remembers to wire it up.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+
+      - name: Gate on known-vulnerable dependencies
+        # --severity HIGH,CRITICAL: the floor a merge should block on. Gating on MEDIUM across a
+        # transitive tree trains people to wave the check through, which costs more than it buys.
+        # --ignore-unfixed: a CVE with no released fix has no action a PR author can take, and a
+        # gate nobody can clear is a gate that gets switched off.
+        # --skip-dirs: vendored Terraform modules ship Terratest fixtures with their own go.mod —
+        # not our dependency tree, and present only where a root has been init'd, so they would
+        # make the result depend on whether someone had run tofu init. This is the only skip that
+        # earns its place; anything broader would narrow the gate for no measured benefit.
+        #
+        # Known limitation: trivy suppresses dev/test dependency groups here. --include-dev-deps
+        # would not help — it covers npm/yarn/gradle only, not uv — so a vulnerable dev-group
+        # dependency is not gated today.
+        run: |
+          trivy fs --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --skip-dirs '**/.terraform' \
+            --exit-code 1 \
+            --no-progress \
+            .

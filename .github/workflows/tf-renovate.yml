@@ -1,0 +1,38 @@
+name: tf-renovate
+
+# Reusable self-hosted Renovate for the IaC fleet. Runs in the CALLER's context on the caller's
+# GITHUB_TOKEN, so each repo keeps its own scoped credential and the pull requests it opens arrive
+# with their workflow runs held for a human to release. A GitHub App would fire those runs
+# immediately; that gate is the reason for the choice, and there is no App-side setting that
+# restores it.
+
+on:
+  workflow_call:
+    inputs:
+      log_level:
+        description: "Renovate LOG_LEVEL. Raise to debug when diagnosing why an update was not proposed."
+        required: false
+        type: string
+        default: "info"
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write # the dependency dashboard is an issue
+      statuses: write # minimumReleaseAge is enforced as a branch status
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: renovatebot/github-action@c314dda4a9a93b08239ec978f2043b9a433b9ac4 # v46.3.0
+        with:
+          token: ${{ github.token }}
+        env:
+          RENOVATE_PLATFORM: github
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: "required"
+          LOG_LEVEL: ${{ inputs.log_level }}
