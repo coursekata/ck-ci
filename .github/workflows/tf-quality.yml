@@ -55,8 +55,7 @@ jobs:
           echo "TF_PLUGIN_CACHE_DIR=$RUNNER_TEMP/tofu-plugins" >> "$GITHUB_ENV"
 
       # The bar and its own hooks both come from this workflow's commit, so a caller pinned to a
-      # release runs that release's checks, and a pull request here runs its own. An annotated tag's
-      # SHA is the tag object; git peels it on checkout, so HEAD is the commit the hooks run at.
+      # release runs that release's checks, and a pull request here runs its own.
       - name: Read the bar at this workflow's commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
