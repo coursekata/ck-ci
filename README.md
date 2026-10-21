@@ -30,7 +30,7 @@ jobs:
       - uses: coursekata/ck-ci/image/build-action@vX.Y.Z
 ```
 
-Releases follow SemVer. While the version is 0.y.z, MINOR marks a change a caller must make and PATCH covers everything else. A release is a new tag, never a moved one.
+Releases follow SemVer. While the version is 0.y.z, MINOR marks a change a caller must make and PATCH covers everything else. A release is a new tag, never a moved one, and a lightweight one: `git tag vX.Y.Z <commit> && git push origin vX.Y.Z`. Actions resolves a same-repository reference inside a called workflow, such as `tf-quality.yml`'s call to `quality.yml`, at the object the caller's tag names, and an annotated tag's object is the tag, not its commit, so a caller on an annotated tag fails at startup with no jobs. GitHub has confirmed the bug and given no date for a fix.
 
 ## Quality bars (`quality.yml` and `tf-quality.yml`)
 
