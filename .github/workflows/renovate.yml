@@ -5,6 +5,10 @@ name: renovate
 # with their workflow runs held for a human to release. A GitHub App would fire those runs
 # immediately; that gate is the reason for the choice, and there is no App-side setting that
 # restores it.
+#
+# A caller that pins a container image its CI releases passes the release-read role, so Renovate
+# can read the release repository and move the pin. The role reads release images and nothing
+# else, and the job's token scopes are the same with or without it.
 
 on:
   workflow_call:
@@ -14,6 +18,16 @@ on:
         required: false
         type: string
         default: "info"
+      aws_role_arn:
+        description: "The release-read role a consumer's Renovate assumes to read an image release repository, for a repository that pins such an image. Empty for one that pins none."
+        required: false
+        type: string
+        default: ""
+      aws_region:
+        description: "Region of that role's registry."
+        required: false
+        type: string
+        default: "us-west-2"
 
 jobs:
   renovate:
@@ -24,12 +38,30 @@ jobs:
       pull-requests: write
       issues: write # the dependency dashboard is an issue
       statuses: write # minimumReleaseAge is enforced as a branch status
+      # For the release-read role. A called job may ask for no more than its caller grants, so every
+      # caller grants this, with or without a role. It reaches nothing: no role in the org trusts a
+      # default-branch identity except an image repository's own candidate role, which any job on
+      # that branch already carries.
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The session lands in the job's environment, which is what the next step forwards.
+      - if: inputs.aws_role_arn != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          role-session-name: renovate-${{ github.run_id }}
+          aws-region: ${{ inputs.aws_region }}
+
+      # Renovate's docker datasource logs in to ECR through the AWS SDK's default credential chain
+      # when no hostRules name a password, so the role's session is all it needs. The action
+      # forwards only the variables its env-regex matches; with a role, the session's four join the
+      # action's own default list (v46.3.0), and without one the default stands and nothing warns.
       - uses: renovatebot/github-action@c314dda4a9a93b08239ec978f2043b9a433b9ac4 # v46.3.0
         with:
           token: ${{ github.token }}
+          env-regex: ${{ inputs.aws_role_arn != '' && '^(?:RENOVATE_\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|(?:HTTPS?|NO)_PROXY|(?:https?|no)_proxy|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|REGION))$' || '' }}
         env:
           RENOVATE_PLATFORM: github
           RENOVATE_REPOSITORIES: ${{ github.repository }}

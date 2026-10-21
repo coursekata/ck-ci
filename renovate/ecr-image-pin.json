@@ -1,0 +1,27 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "For a repository that pins a container image the org's image pipeline released: any tfvars line of the form <account>.dkr.ecr.<region>.amazonaws.com/<repository>:run-<run id>@sha256:<digest> is a dependency whose versions are the release repository's run-<id> tags, ordered by run id, since run ids only increase and commit hashes do not sort. The digest is what runs; the run tag is there to order by. A consumer's pins move together in one pull request on a stable branch, outside the non-major batch, with no release age and no dashboard approval, since the images are the consumer's own and their tests already ran. A new run id reads as a major to the regex versioning, which is why the dashboard rule is overridden here. The workflow that runs this needs the release-read role (renovate.yml's aws_role_arn).",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The pin, wherever a tfvars file writes it. depName is the repository URL, currentValue the run tag and currentDigest the digest, so an update moves both.",
+      "managerFilePatterns": ["/\\.tfvars$/"],
+      "matchStrings": ["(?<depName>[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+):(?<currentValue>run-[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "regex:^run-(?<major>\\d+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "One pull request per consumer for its image pins, on renovate/image-pins, at once and without the dashboard. Only the pins: an ECR image another manager finds keeps the shared rules.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["/\\.dkr\\.ecr\\./"],
+      "matchCurrentValue": "/^run-[0-9]+$/",
+      "minimumReleaseAge": null,
+      "dependencyDashboardApproval": false,
+      "groupName": "image pins",
+      "groupSlug": "image-pins"
+    }
+  ]
+}

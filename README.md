@@ -13,6 +13,7 @@ The repository is public, so a workflow in either organization calls it with no 
 | `.github/workflows/tf-quality.yml`, with the hook config it runs and its own hooks' scripts in `tf-quality/` | Each OpenTofu repository's `ci.yml`, in place of `quality.yml`, which it runs. |
 | `.github/workflows/renovate.yml` | The Renovate workflow of a repository whose CI holds cloud credentials. |
 | `renovate/default.json` | Every repository's `renovate.json`, through `extends`. |
+| `renovate/ecr-image-pin.json` | A consumer's `renovate.json`, through `extends`, for each tfvars pin of an image the image pipeline released. |
 
 ## Pinning and releases
 
@@ -79,10 +80,13 @@ permissions:
   pull-requests: write
   issues: write
   statuses: write
+  id-token: write
 jobs:
   renovate:
     uses: coursekata/ck-ci/.github/workflows/renovate.yml@vX.Y.Z
 ```
+
+Every caller grants `id-token: write`, since a called job may ask for no more than its caller grants and the workflow's job asks for it to assume a consumer's release-read role. In a repository that pins no image the identity reaches nothing: no role in the org trusts a default-branch subject except an image repository's own candidate role, which any job on that branch already carries.
 
 ```json
 { "extends": ["github>coursekata/ck-ci//renovate/default.json"] }
@@ -91,6 +95,8 @@ jobs:
 **The workflow is pinned and the preset is not.** A workflow executes code, so it is pinned by tag and the caller's dependency bot moves the pin. The preset is policy that executes nothing, so it resolves from `main` and a change reaches every repository at once, which is the point of having one.
 
 **`renovate.yml` runs on each caller's own `GITHUB_TOKEN`**, not a central App. Pull requests opened that way arrive with their CI held for a person to release; an App would start those runs at once, and no App setting restores the hold. `statuses: write` is required: `minimumReleaseAge` is enforced as a branch status, and without it Renovate creates the branch, fails, and reports "Repository has changed during renovation" without opening the pull request.
+
+**A consumer that pins an image** the image pipeline released, as `<release repository>:run-<run id>@sha256:<digest>` in a tfvars file, extends `renovate/ecr-image-pin.json` as well and passes the workflow the repository's release-read role as `aws_role_arn`. Renovate then reads the release repository, orders its releases by run id, and moves the pin by pull request, one per consumer for all its pins, with no release age and no dashboard approval. Like `default.json`, the preset resolves from `main`.
 
 A repository-scoped token cannot write under `.github/workflows`, so the preset leaves the `github-actions` manager off and Dependabot keeps that ecosystem. It cannot read Dependabot alerts either, so vulnerability alerts surface through Dependabot and the CVE gate rather than through Renovate.
 
