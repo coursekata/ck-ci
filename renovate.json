@@ -7,18 +7,10 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "The BuildKit image every image-pipeline build runs on, by tag and digest. Its digest moves with its tag.",
-      "managerFilePatterns": ["/^image-pipeline/pins\\.sh$/"],
-      "matchStrings": ["BUILDKIT_IMAGE=\"(?<depName>moby/buildkit):(?<currentValue>v[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""],
+      "description": "The BuildKit image the workflows and actions give docker/setup-buildx-action in driver-opts, which Renovate's GitHub Actions manager does not read. It matches the image reference itself, by tag and digest, wherever a workflow or action writes it.",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/", "/^image/[^/]+-action/action\\.ya?ml$/"],
+      "matchStrings": ["(?<depName>moby/buildkit):(?<currentValue>v[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})"],
       "datasourceTemplate": "docker"
-    },
-    {
-      "customType": "regex",
-      "description": "The buildx release the image pipeline installs through docker/setup-buildx-action.",
-      "managerFilePatterns": ["/^image-pipeline/pins\\.sh$/"],
-      "matchStrings": ["BUILDX_VERSION=\"(?<currentValue>v[^\"]+)\""],
-      "depNameTemplate": "docker/buildx",
-      "datasourceTemplate": "github-releases"
     },
     {
       "customType": "regex",
@@ -29,10 +21,15 @@
   ],
   "packageRules": [
     {
-      "description": "The GitHub Actions manager is on only for the tool versions the setup actions take as inputs: tflint and trivy. Dependabot keeps every action SHA.",
+      "description": "The GitHub Actions manager is on only for the tool versions the setup actions take as inputs: buildx, tflint and trivy. Dependabot keeps every action SHA.",
       "matchManagers": ["github-actions"],
-      "matchPackageNames": ["!terraform-linters/tflint", "!aquasecurity/trivy"],
+      "matchPackageNames": ["!docker/buildx", "!terraform-linters/tflint", "!aquasecurity/trivy"],
       "enabled": false
+    },
+    {
+      "description": "The pipeline runs BuildKit and buildx as a pair, so one pull request and one dependency-dashboard approval move every copy of both. Without the group, the shared preset's rule for 0.x minors gives each its own.",
+      "matchPackageNames": ["docker/buildx", "moby/buildkit"],
+      "groupName": "BuildKit and buildx"
     },
     {
       "description": "The quality workflow, this repository's own hook and the OpenTofu bar's hook config each name a gitleaks version. One pull request moves every copy, so the bar's local gitleaks never trails the history scan.",

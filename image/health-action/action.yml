@@ -1,0 +1,19 @@
+name: image-health
+description: Runs an image's own HEALTHCHECK in a container with no network and no mounts, and fails if it does not become healthy.
+
+# The image must already be in Docker, such as build-action's `image` output. An image that declares
+# no HEALTHCHECK warns and passes, since there is nothing to run.
+
+inputs:
+  image:
+    description: The image to check, already in Docker.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run the image's health check
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: '"$GITHUB_ACTION_PATH/../health.sh" "$IMAGE"'

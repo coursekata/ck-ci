@@ -1,12 +1,7 @@
-# actionlint v1.7.12 does not yet know three things GitHub documents: the job.workflow_* properties,
-# which a reusable workflow uses to read files from its own repository at its own commit, and a
-# job's cache-mode, which shuts the job out of the GitHub Actions cache. Drop each ignore once
-# actionlint knows it.
+# actionlint v1.7.12 does not yet know the job.workflow_* properties GitHub documents, which a
+# reusable workflow uses to read files from its own repository at its own commit. Drop the ignore
+# once actionlint knows them.
 paths:
   .github/workflows/tf-quality.yml:
     ignore:
       - 'property "workflow_(repository|sha)" is not defined in object type'
-  .github/workflows/image.yml:
-    ignore:
-      - 'property "workflow_sha" is not defined in object type'
-      - 'unexpected key "cache-mode" for "job" section'

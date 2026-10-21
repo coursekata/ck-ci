@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Fake docker. Logs each call.
+#
+# `buildx bake --print` prints $FAKE_STATE/bake-print. Any other bake prints $FAKE_STATE/bake-log to
+# stderr, as a build's progress goes, and exits with $FAKE_STATE/bake-status (default 0).
+#
+# `buildx imagetools inspect` answers from a registry kept in $FAKE_STATE/registry,
+# one "<ref> <digest>" line per reference, the last line winning, and from
+# $FAKE_STATE/registry-errors, "<ref> <message>" lines for references that fail. A
+# reference in neither is not found, in buildx's words.
+set -euo pipefail
+echo "docker $*" >>"$FAKE_STATE/calls"
+case "${1:-}" in
+  version)
+    # version --format '{{.Server.Os}}/{{.Server.Arch}}': the runner's platform.
+    cat "$FAKE_STATE/platform" 2>/dev/null || echo linux/amd64
+    exit 0
+    ;;
+  image)
+    # image inspect --format <template> <ref>. The platform template prints
+    # $FAKE_STATE/image-platform, else the runner's. The health check template prints
+    # $FAKE_STATE/healthcheck, or nothing when the image declares none. The layers template prints
+    # $FAKE_STATE/loaded-layers.
+    case "$*" in
+      *'{{.Os}}/{{.Architecture}}'*) cat "$FAKE_STATE/image-platform" 2>/dev/null || cat "$FAKE_STATE/platform" 2>/dev/null || echo linux/amd64 ;;
+      *Healthcheck*) cat "$FAKE_STATE/healthcheck" 2>/dev/null || true ;;
+      *RootFS.Layers*) cat "$FAKE_STATE/loaded-layers" ;;
+    esac
+    exit 0
+    ;;
+  compose)
+    # Logs the image compose was given; `up` exits with $FAKE_STATE/compose-status.
+    echo "compose-env image=[${IMAGE_REF:-}]" >>"$FAKE_STATE/calls"
+    case " $* " in
+      *" up "*) exit "$(cat "$FAKE_STATE/compose-status" 2>/dev/null || echo 0)" ;;
+      *" logs "*) echo "candidate-1  | the service's last words" ;;
+    esac
+    exit 0
+    ;;
+esac
+[ "${1:-}" = buildx ] || exit 0
+
+lookup() {
+  local msg
+  if [ -f "$FAKE_STATE/registry-errors" ] &&
+    msg=$(awk -v r="$1" '$1 == r { sub(/^[^ ]+ /, ""); print; found = 1; exit } END { exit !found }' "$FAKE_STATE/registry-errors"); then
+    echo "$msg" >&2
+    return 1
+  fi
+  if [ -f "$FAKE_STATE/registry" ] &&
+    awk -v r="$1" '$1 == r { d = $2 } END { if (d == "") exit 1; print d }' "$FAKE_STATE/registry"; then
+    return 0
+  fi
+  echo "ERROR: $1: not found" >&2
+  return 1
+}
+
+if [ "${2:-}" = bake ]; then
+  case " $* " in
+    *" --print "*) cat "$FAKE_STATE/bake-print" ;;
+    *)
+      cat "$FAKE_STATE/bake-log" >&2 2>/dev/null || true
+      exit "$(cat "$FAKE_STATE/bake-status" 2>/dev/null || echo 0)"
+      ;;
+  esac
+  exit 0
+fi
+
+case "${2:-} ${3:-}" in
+  "imagetools inspect")
+    ref=${!#}
+    case "$*" in
+      *'{{json .Image}}'*)
+        # inspect --format '{{json .Image}}' <ref>: the config image_config stored, else not found.
+        f="$FAKE_STATE/config/$(tr '/:@' '___' <<<"$ref")"
+        [ -f "$f" ] || { echo "ERROR: $ref: not found" >&2; exit 1; }
+        cat "$f"
+        ;;
+      *)
+        # inspect --format '{{json .Manifest}}' <ref>
+        digest=$(lookup "$ref")
+        jq -nc --arg d "$digest" '{mediaType: "application/vnd.oci.image.manifest.v1+json", digest: $d, size: 1}'
+        ;;
+    esac
+    ;;
+  "imagetools create")
+    # create ... : logged above; exits with $FAKE_STATE/create-status (default 0).
+    exit "$(cat "$FAKE_STATE/create-status" 2>/dev/null || echo 0)"
+    ;;
+  *)
+    echo "fake docker does not handle: $*" >&2
+    exit 2
+    ;;
+esac
