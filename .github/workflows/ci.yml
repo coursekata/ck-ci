@@ -3,7 +3,8 @@ name: ci
 # This repository's own gate. quality runs the general bar on this repository. tf-quality runs the
 # OpenTofu bar against its fixture in tf-quality/tests/fixture, so a change to either workflow runs
 # here before any caller can pin it, at the cost of a second secret and CVE scan. hooks runs this
-# repository's pre-commit hooks, and image the image actions' scripts against real tools.
+# repository's pre-commit hooks, and image the image actions' scripts against real tools, then the
+# actions themselves on the fixture.
 # ci-passed is the single stable status check the main branch ruleset points at.
 
 on:
@@ -84,6 +85,53 @@ jobs:
 
       - name: Run the image actions' scripts against real tools
         run: image/tests/integration.sh
+
+      # The actions themselves, on the fixture, so a template or an output that only a live run
+      # evaluates fails here before any caller pins a release. bake resolves a bake file's paths
+      # against the working directory, which a composite step cannot change, so the fixture is
+      # copied to the workspace root first. No cache repository, so the build starts cold.
+      - name: Put the fixture where the actions run
+        run: cp -R image/tests/fixture/. .
+
+      - id: build
+        uses: ./image/build-action
+        with:
+          target: app
+          test-target: app-test
+
+      - uses: ./image/health-action
+        with:
+          image: ${{ steps.build.outputs.image }}
+
+      - id: push
+        uses: ./image/push-action
+        with:
+          candidate-repository: localhost:5000/candidate/app
+          layout: ${{ steps.build.outputs.layout }}
+          digest: ${{ steps.build.outputs.digest }}
+          cache-layout: ${{ steps.build.outputs.cache-layout }}
+          cache-digest: ${{ steps.build.outputs.cache-digest }}
+
+      - id: release
+        uses: ./image/release-action
+        with:
+          candidate-repository: localhost:5000/candidate/app
+          release-repository: localhost:5000/release/app
+          cache-repository: localhost:5000/cache/app
+          digest: ${{ steps.push.outputs.digest }}
+          cache-digest: ${{ steps.push.outputs.cache-digest }}
+          tags: ${{ steps.build.outputs.tags }}
+
+      - name: The actions' outputs name the released build
+        env:
+          BUILT: ${{ steps.build.outputs.digest }}
+          RELEASED: ${{ steps.release.outputs.digest }}
+          FLAG: ${{ steps.release.outputs.released }}
+        run: |
+          if [ -z "$BUILT" ] || [ "$RELEASED" != "$BUILT" ] || [ "$FLAG" != true ]; then
+            echo "::error::built=$BUILT released=$RELEASED released-flag=$FLAG"
+            exit 1
+          fi
 
   ci-passed:
     if: always()

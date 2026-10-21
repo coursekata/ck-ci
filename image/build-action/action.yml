@@ -31,13 +31,13 @@ outputs:
     value: ${{ steps.load.outputs.image }}
   digest:
     description: The built image's digest.
-    value: ${{ fromJSON(steps.build.outputs.metadata)[inputs.target]['containerimage.digest'] }}
+    value: ${{ steps.digests.outputs.image }}
   layout:
     description: The OCI layout holding the built image, for push-action.
     value: ${{ runner.temp }}/image-build/${{ inputs.target }}/image
   cache-digest:
     description: The build cache's digest.
-    value: ${{ steps.cache-out.outputs.digest }}
+    value: ${{ steps.digests.outputs.cache }}
   cache-layout:
     description: The OCI layout holding the build cache, for push-action.
     value: ${{ runner.temp }}/image-build/${{ inputs.target }}/cache
@@ -108,13 +108,20 @@ runs:
           ${{ inputs.target }}.cache-to=type=local,dest=${{ runner.temp }}/image-build/${{ inputs.target }}/cache,mode=max,oci-mediatypes=true,image-manifest=true
           ${{ steps.cache.outputs.from && format('*.cache-from={0}', steps.cache.outputs.from) || '' }}
 
-    # The cache directory is an OCI layout whose index names one manifest: the cache push-action sends.
-    - name: Read the build cache's digest
-      id: cache-out
+    # The build's two digests, as step outputs: the image's from bake's metadata, the cache's from
+    # the cache layout's index, which names the one manifest push-action sends.
+    - name: Read the build's digests
+      id: digests
       shell: bash
       env:
+        METADATA: ${{ steps.build.outputs.metadata }}
+        TARGET: ${{ inputs.target }}
         INDEX: ${{ runner.temp }}/image-build/${{ inputs.target }}/cache/index.json
-      run: echo "digest=$(jq -r '.manifests[0].digest' "$INDEX")" >>"$GITHUB_OUTPUT"
+      run: |
+        image=$(jq -r --arg t "$TARGET" '.[$t]["containerimage.digest"] // empty' <<<"$METADATA")
+        [ -n "$image" ] || { echo "::error::Bake's metadata holds no digest for $TARGET."; exit 1; }
+        echo "image=$image" >>"$GITHUB_OUTPUT"
+        echo "cache=$(jq -r '.manifests[0].digest' "$INDEX")" >>"$GITHUB_OUTPUT"
 
     - name: Run the tests on the built image
       shell: bash
@@ -123,7 +130,7 @@ runs:
         IMAGE_BUILD_TEST: ${{ inputs.test-target }}
         IMAGE_BUILD_STAGE: ${{ steps.preflight.outputs.stage }}
         IMAGE_BUILD_LAYOUT: ${{ runner.temp }}/image-build/${{ inputs.target }}/image
-        IMAGE_BUILD_DIGEST: ${{ fromJSON(steps.build.outputs.metadata)[inputs.target]['containerimage.digest'] }}
+        IMAGE_BUILD_DIGEST: ${{ steps.digests.outputs.image }}
       run: '"$GITHUB_ACTION_PATH/../run-tests.sh"'
 
     - name: Load the image for this runner's checks
