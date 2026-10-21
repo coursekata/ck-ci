@@ -1,0 +1,13 @@
+# Operator-local credentials and overrides
+.env
+!.env.example
+
+# OpenTofu's working directory, from running the fixture locally
+.terraform/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

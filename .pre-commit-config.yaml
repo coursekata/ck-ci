@@ -1,0 +1,57 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+
+  # Stops a secret from ever entering the history; CI re-checks the full commit graph, because
+  # this hook only sees the staged diff and yields to --no-verify.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      # -system resolves gitleaks from PATH rather than building it with Go;
+      # upstream omits pass_filenames on this variant only, so the staged paths would otherwise
+      # be appended and the first one read as gitleaks' target directory.
+      - id: gitleaks-system
+        pass_filenames: false
+
+  - repo: https://github.com/renovatebot/pre-commit-hooks
+    rev: 44.57.2
+    hooks:
+      - id: renovate-config-validator
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: ^(image-pipeline|tf-quality)/
+        types_or: [shell, bats]
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  - repo: local
+    hooks:
+      # The tf-quality tests need bats with bats-support and bats-assert, found on BATS_LIB_PATH.
+      - id: image-pipeline-tests
+        name: image pipeline unit tests
+        entry: image-pipeline/tests/run.sh
+        language: script
+        files: ^(image-pipeline/|\.github/workflows/image\.yml$)
+        pass_filenames: false
+        require_serial: true
+
+      # Runs the bar's own hook scripts on small trees built per test; needs tofu and jq.
+      - id: tf-quality-tests
+        name: tf-quality hook tests
+        entry: bats tf-quality/tests
+        language: system
+        files: ^tf-quality/
+        pass_filenames: false
+        require_serial: true

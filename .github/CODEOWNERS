@@ -1,0 +1,3 @@
+# Every repository's CI calls what is here, and a change reaches each caller that moves to the next
+# release, so all paths route to @adamblake for review.
+*  @adamblake
