@@ -55,19 +55,26 @@ jobs:
           echo "TF_PLUGIN_CACHE_DIR=$RUNNER_TEMP/tofu-plugins" >> "$GITHUB_ENV"
 
       # The bar and its own hooks both come from this workflow's commit, so a caller pinned to a
-      # release runs that release's checks, and a pull request here runs its own.
+      # release runs that release's checks, and a pull request here runs its own. An annotated tag's
+      # SHA is the tag object; git peels it on checkout, so HEAD is the commit the hooks run at.
       - name: Read the bar at this workflow's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .tf-quality-bar
+          sparse-checkout: tf-quality/pre-commit-config.yaml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Run the bar's own hooks at that commit too
         env:
           REPOSITORY: ${{ job.workflow_repository }}
-          SHA: ${{ job.workflow_sha }}
+          BAR: .tf-quality-bar
         run: |
-          if [ -z "$REPOSITORY" ] || [ -z "$SHA" ]; then
-            echo "::error::No workflow repository or commit to read the bar from."
-            exit 1
-          fi
-          curl -fsSL --proto '=https' -o "$RUNNER_TEMP/tf-quality.yaml" \
-            "https://raw.githubusercontent.com/$REPOSITORY/$SHA/tf-quality/pre-commit-config.yaml"
-          URL="https://github.com/$REPOSITORY" yq -i \
+          SHA=$(git -C "$BAR" rev-parse HEAD)
+          cp "$BAR/tf-quality/pre-commit-config.yaml" "$RUNNER_TEMP/tf-quality.yaml"
+          URL="https://github.com/$REPOSITORY" SHA="$SHA" yq -i \
             '(.repos[] | select(.repo == "https://github.com/coursekata/ck-ci")) |= (.repo = env(URL) | .rev = env(SHA))' \
             "$RUNNER_TEMP/tf-quality.yaml"
           # Both of the bar's ck-ci entries, or it would run its hooks from the release it names.
