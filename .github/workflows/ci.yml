@@ -1,0 +1,109 @@
+name: ci
+
+# This repository's own gate. quality runs the general bar on this repository. tf-quality runs the
+# OpenTofu bar against its fixture in tf-quality/tests/fixture, so a change to either workflow runs
+# here before any caller can pin it, at the cost of a second secret and CVE scan. hooks runs this
+# repository's pre-commit hooks, and image-pipeline the image pipeline's scripts end to end.
+# ci-passed is the single stable status check the main branch ruleset points at.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
+  tf-quality:
+    uses: ./.github/workflows/tf-quality.yml
+    with:
+      tofu_version: "1.12.2"
+
+  # The hooks, apart from gitleaks, whose full-history scan quality runs. OpenTofu and bats are here
+  # for the test hooks.
+  hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.12.2"
+          tofu_wrapper: false
+
+      - id: bats
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+        with:
+          bats-version: 1.14.0
+          support-version: 0.3.0
+          assert-version: 2.2.4
+          detik-install: false
+          file-install: false
+
+      - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+        env:
+          SKIP: gitleaks-system
+          BATS_LIB_PATH: ${{ steps.bats.outputs.lib-path }}
+        with:
+          extra-args: --all-files
+
+  image-pipeline:
+    # The image pipeline's scripts end to end against a real BuildKit and registry,
+    # with buildx and the builder set up the way the image workflow sets them up.
+    # Their unit tests run in hooks.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      registry:
+        image: registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the tool pins
+        id: pins
+        run: |
+          . image-pipeline/pins.sh
+          echo "buildkit=$BUILDKIT_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "buildx=$BUILDX_VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: ${{ steps.pins.outputs.buildx }}
+          driver: docker-container
+          driver-opts: |
+            image=${{ steps.pins.outputs.buildkit }}
+            network=host
+          cache-binary: false
+
+      - name: Build, test and release a fixture through the pipeline scripts
+        run: image-pipeline/tests/integration.sh
+
+  ci-passed:
+    if: always()
+    needs: [quality, tf-quality, hooks, image-pipeline]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert all required CI jobs succeeded
+        run: |
+          for r in "${{ needs.quality.result }}" "${{ needs.tf-quality.result }}" "${{ needs.hooks.result }}" "${{ needs.image-pipeline.result }}"; do
+            if [ "$r" != "success" ]; then
+              echo "quality: ${{ needs.quality.result }}, tf-quality: ${{ needs.tf-quality.result }}, hooks: ${{ needs.hooks.result }}, image-pipeline: ${{ needs.image-pipeline.result }}"
+              exit 1
+            fi
+          done
+          echo "All required CI jobs succeeded."

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Runs as the hosted Renovate App. The spokes that extend this same preset run renovate.yml on their own token instead, because a bot pull request there would run a plan that holds cloud credentials. Nothing here logs in to a cloud, and the App's pull requests start CI at once, so they report the ci-passed check the main ruleset requires.",
+  "extends": ["github>coursekata/ck-ci//renovate/default.json"],
+  "enabledManagers": ["pre-commit", "github-actions", "custom.regex"],
+  "pre-commit": { "managerFilePatterns": ["/^tf-quality/pre-commit-config\\.yaml$/"] },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The BuildKit image every image-pipeline build runs on, by tag and digest. Its digest moves with its tag.",
+      "managerFilePatterns": ["/^image-pipeline/pins\\.sh$/"],
+      "matchStrings": ["BUILDKIT_IMAGE=\"(?<depName>moby/buildkit):(?<currentValue>v[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "The buildx release the image pipeline installs through docker/setup-buildx-action.",
+      "managerFilePatterns": ["/^image-pipeline/pins\\.sh$/"],
+      "matchStrings": ["BUILDX_VERSION=\"(?<currentValue>v[^\"]+)\""],
+      "depNameTemplate": "docker/buildx",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "The gitleaks version the quality workflow downloads, written under a renovate comment that names its datasource and package, since no action installs it.",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+[A-Za-z_-]+:\\s*(?<currentValue>v\\S+)"]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "The GitHub Actions manager is on only for the tool versions the setup actions take as inputs: tflint and trivy. Dependabot keeps every action SHA.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["!terraform-linters/tflint", "!aquasecurity/trivy"],
+      "enabled": false
+    },
+    {
+      "description": "The quality workflow, this repository's own hook and the OpenTofu bar's hook config each name a gitleaks version. One pull request moves every copy, so the bar's local gitleaks never trails the history scan.",
+      "matchPackageNames": ["gitleaks/gitleaks"],
+      "groupName": "gitleaks"
+    }
+  ]
+}
