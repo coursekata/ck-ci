@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "For a repository that pins a container image the org's image pipeline released: any tfvars line of the form <account>.dkr.ecr.<region>.amazonaws.com/<repository>:run-<run id>@sha256:<digest> is a dependency whose versions are the release repository's run-<id> tags, ordered by run id, since run ids only increase and commit hashes do not sort. The digest is what runs; the run tag is there to order by. A consumer's pins move together in one pull request on a stable branch, outside the non-major batch, with no release age and no dashboard approval, since the images are the consumer's own and their tests already ran. A new run id reads as a major to the regex versioning, which is why the dashboard rule is overridden here. The workflow that runs this needs the release-read role (renovate.yml's aws_role_arn).",
+  "description": "For a repository that pins a container image the org's image pipeline released: any tfvars line of the form <account>.dkr.ecr.<region>.amazonaws.com/<repository>:run-<run id>@sha256:<digest> is a dependency whose versions are the release repository's run-<id> tags, ordered by run id, since run ids only increase and commit hashes do not sort. The digest is what runs; the run tag is there to order by. A consumer's pins move together in one pull request on a stable branch, outside the non-major batch, with no release age and no dashboard approval, since the images are the consumer's own and their tests already ran. A new run id reads as a major to the regex versioning, which is why the dashboard rule is overridden here, and run ids are hundreds of millions apart, which is why the limit on how far a major may jump is lifted for them. The workflow that runs this needs the release-read role (renovate.yml's aws_role_arn).",
   "customManagers": [
     {
       "customType": "regex",
@@ -13,12 +13,13 @@
   ],
   "packageRules": [
     {
-      "description": "One pull request per consumer for its image pins, on renovate/image-pins, at once and without the dashboard. Only the pins: an ECR image another manager finds keeps the shared rules.",
+      "description": "One pull request per consumer for its image pins, on renovate/major-image-pins since every new run id is a major, at once and without the dashboard. Only the pins: an ECR image another manager finds keeps the shared rules.",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
       "matchPackageNames": ["/\\.dkr\\.ecr\\./"],
       "matchCurrentValue": "/^run-[0-9]+$/",
       "minimumReleaseAge": null,
+      "maxMajorIncrement": 0,
       "dependencyDashboardApproval": false,
       "groupName": "image pins",
       "groupSlug": "image-pins"
