@@ -1,0 +1,25 @@
+# The OpenTofu bar's own checks, for tf-quality/pre-commit-config.yaml. Each takes the file names
+# prek passes, so none reads git.
+- id: tofu-ban
+  name: ban plan-time code execution
+  description: Fails an external data source, a provisioner, a provider endpoints override or JSON configuration.
+  entry: tf-quality/ban.sh
+  language: script
+  files: \.(tf|tofu)(\.json)?$
+
+- id: tofu-testing-guard
+  name: var.testing never ships enabled
+  description: Fails a committed testing = true outside tests/.
+  entry: tf-quality/testing-guard.sh
+  language: script
+  files: \.(tf|tofu|tfvars)$|\.tfvars\.json$
+  exclude: (^|/)tests/
+
+# Serial, so prek passes every file in one call and no suite runs twice or two at once.
+- id: tofu-test
+  name: tofu test
+  description: Runs every suite whose module tree holds a changed file.
+  entry: tf-quality/tofu-test.sh
+  language: script
+  files: \.(tf|tofu|tfvars)(\.json)?$|\.(tftest|tofutest|tfmock|tofumock)\.(hcl|json)$|(^|/)\.terraform\.lock\.hcl$
+  require_serial: true
