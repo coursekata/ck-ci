@@ -1,0 +1,52 @@
+name: image-push
+description: Pushes a tested image and its build cache, from build-action's OCI layouts, by digest to a candidate repository.
+
+# One image per call, after the caller's checks, with credentials that can write the candidate
+# repository. The registry receives the tested bytes: nothing is rebuilt.
+
+inputs:
+  candidate-repository:
+    description: Repository the image is pushed to by digest, untagged, and its cache under cache-<run id>-<run attempt>.
+    required: true
+  layout:
+    description: build-action's `layout`.
+    required: true
+  digest:
+    description: build-action's `digest`.
+    required: true
+  cache-layout:
+    description: build-action's `cache-layout`.
+    required: true
+  cache-digest:
+    description: build-action's `cache-digest`.
+    required: true
+
+outputs:
+  digest:
+    description: The pushed image's digest.
+    value: ${{ inputs.digest }}
+  cache-digest:
+    description: The pushed build cache's digest.
+    value: ${{ inputs.cache-digest }}
+
+runs:
+  using: composite
+  steps:
+    # Only copies, so the docker driver: the pinned buildx, and no BuildKit.
+    - name: Set up buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      with:
+        version: v0.38.0
+        driver: docker
+        cache-binary: false
+
+    - name: Push the image and its cache
+      shell: bash
+      env:
+        CANDIDATE: ${{ inputs.candidate-repository }}
+        LAYOUT: ${{ inputs.layout }}
+        DIGEST: ${{ inputs.digest }}
+        CACHE_LAYOUT: ${{ inputs.cache-layout }}
+        CACHE_DIGEST: ${{ inputs.cache-digest }}
+        CACHE_TAG: cache-${{ github.run_id }}-${{ github.run_attempt }}
+      run: '"$GITHUB_ACTION_PATH/../push.sh"'

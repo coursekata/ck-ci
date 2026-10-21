@@ -1,5 +1,0 @@
-source-path=SCRIPTDIR
-external-sources=true
-# Test functions are found by name at run time, so shellcheck sees them as never
-# called; workflow expressions in tests are literal text, not shell expansions.
-disable=SC2329,SC2317,SC2016

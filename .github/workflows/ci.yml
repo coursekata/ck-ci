@@ -3,7 +3,7 @@ name: ci
 # This repository's own gate. quality runs the general bar on this repository. tf-quality runs the
 # OpenTofu bar against its fixture in tf-quality/tests/fixture, so a change to either workflow runs
 # here before any caller can pin it, at the cost of a second secret and CVE scan. hooks runs this
-# repository's pre-commit hooks, and image-pipeline the image pipeline's scripts end to end.
+# repository's pre-commit hooks, and image the image actions' scripts against real tools.
 # ci-passed is the single stable status check the main branch ruleset points at.
 
 on:
@@ -58,10 +58,9 @@ jobs:
         with:
           extra-args: --all-files
 
-  image-pipeline:
-    # The image pipeline's scripts end to end against a real BuildKit and registry,
-    # with buildx and the builder set up the way the image workflow sets them up.
-    # Their unit tests run in hooks.
+  image:
+    # The image actions' scripts against a real BuildKit, Docker and registry, with buildx
+    # and the builder set up the way build-action sets them up. Their unit tests run in hooks.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -74,35 +73,28 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Read the tool pins
-        id: pins
-        run: |
-          . image-pipeline/pins.sh
-          echo "buildkit=$BUILDKIT_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "buildx=$BUILDX_VERSION" >> "$GITHUB_OUTPUT"
-
+      # The buildx version and BuildKit image build-action pins. Renovate moves every copy in
+      # one pull request; a change by hand changes them all.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: ${{ steps.pins.outputs.buildx }}
+          version: v0.38.0
           driver: docker-container
-          driver-opts: |
-            image=${{ steps.pins.outputs.buildkit }}
-            network=host
+          driver-opts: image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
           cache-binary: false
 
-      - name: Build, test and release a fixture through the pipeline scripts
-        run: image-pipeline/tests/integration.sh
+      - name: Run the image actions' scripts against real tools
+        run: image/tests/integration.sh
 
   ci-passed:
     if: always()
-    needs: [quality, tf-quality, hooks, image-pipeline]
+    needs: [quality, tf-quality, hooks, image]
     runs-on: ubuntu-latest
     steps:
       - name: Assert all required CI jobs succeeded
         run: |
-          for r in "${{ needs.quality.result }}" "${{ needs.tf-quality.result }}" "${{ needs.hooks.result }}" "${{ needs.image-pipeline.result }}"; do
+          for r in "${{ needs.quality.result }}" "${{ needs.tf-quality.result }}" "${{ needs.hooks.result }}" "${{ needs.image.result }}"; do
             if [ "$r" != "success" ]; then
-              echo "quality: ${{ needs.quality.result }}, tf-quality: ${{ needs.tf-quality.result }}, hooks: ${{ needs.hooks.result }}, image-pipeline: ${{ needs.image-pipeline.result }}"
+              echo "quality: ${{ needs.quality.result }}, tf-quality: ${{ needs.tf-quality.result }}, hooks: ${{ needs.hooks.result }}, image: ${{ needs.image.result }}"
               exit 1
             fi
           done

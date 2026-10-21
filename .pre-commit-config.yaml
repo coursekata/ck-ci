@@ -28,7 +28,7 @@ repos:
     rev: v0.11.0.1
     hooks:
       - id: shellcheck
-        files: ^(image-pipeline|tf-quality)/
+        files: ^(image|tf-quality)/
         types_or: [shell, bats]
 
   - repo: https://github.com/rhysd/actionlint
@@ -38,12 +38,12 @@ repos:
 
   - repo: local
     hooks:
-      # The tf-quality tests need bats with bats-support and bats-assert, found on BATS_LIB_PATH.
-      - id: image-pipeline-tests
-        name: image pipeline unit tests
-        entry: image-pipeline/tests/run.sh
-        language: script
-        files: ^(image-pipeline/|\.github/workflows/image\.yml$)
+      # Both need bats with bats-support and bats-assert, found on BATS_LIB_PATH.
+      - id: image-tests
+        name: image unit tests
+        entry: bats image/tests
+        language: system
+        files: ^image/
         pass_filenames: false
         require_serial: true
 

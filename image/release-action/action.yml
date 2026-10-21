@@ -1,0 +1,109 @@
+name: image-release
+description: Copies a changed image by digest, unchanged, to a release repository under the given tags, and moves the cache repository's current tag to its build cache. An image that matches the newest release apart from build metadata is released nowhere and tagged nowhere.
+
+# One image per call, with the caller logged in to write the release and cache repositories. The
+# caller finds the baseline, the newest image in the release repository, with the registry's own
+# tooling and passes its digest; the action reads no registry listing, so it is the same on every
+# registry. --prefer-index=false stops buildx wrapping a single-platform image in a new index, which
+# would release other bytes than the ones given.
+
+inputs:
+  candidate-repository:
+    description: Repository holding the image and build cache to release.
+    required: true
+  release-repository:
+    description: Repository the image is released to.
+    required: true
+  cache-repository:
+    description: Repository whose `current` tag is moved to cache-digest. Leave empty, with cache-digest, to leave the cache alone.
+    default: ""
+  digest:
+    description: Digest of the image to release, in candidate-repository.
+    required: true
+  baseline-digest:
+    description: Digest of the newest image in release-repository, which the candidate is compared with. Leave empty when the repository holds none; the image then releases as new.
+    default: ""
+  tags:
+    description: Tag names to release the image under, one per line. Must include sha-<commit>, which marks the commit as released. An unchanged image gets none of them.
+    required: true
+  cache-digest:
+    description: Digest of the build cache in candidate-repository, to make current in cache-repository.
+    default: ""
+  always-update-cache:
+    description: Move the cache even when the tags already name another image. Set true when the image was built without the cache.
+    default: "false"
+
+outputs:
+  digest:
+    description: The released digest, or the baseline's when the image is unchanged from it, or an earlier release's of this commit when one stands.
+    value: ${{ steps.compare.outputs.unchanged == 'true' && inputs.baseline-digest || steps.state.outputs.digest }}
+  released:
+    description: true when this commit's image is the release, copied by this run or finished by it after a run cut short; false when it was unchanged or an earlier release of the commit stands.
+    value: ${{ steps.state.outputs.earlier == '' && steps.compare.outputs.unchanged != 'true' }}
+
+runs:
+  using: composite
+  steps:
+    # Only copies, so the docker driver: the pinned buildx, and no BuildKit.
+    - name: Set up buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      with:
+        version: v0.38.0
+        driver: docker
+        cache-binary: false
+
+    # First, because a release cut short leaves the candidate as the newest image: compared with
+    # itself it would read as unchanged, and a re-run would finish nothing.
+    - name: Read what the release already has
+      id: state
+      shell: bash
+      env:
+        TAGS: ${{ inputs.tags }}
+        RELEASE: ${{ inputs.release-repository }}
+        DIGEST: ${{ inputs.digest }}
+      run: '"$GITHUB_ACTION_PATH/../read-release.sh"'
+
+    # Only a commit with no release yet is compared. An unchanged image skips every write below.
+    - name: Compare the image with the newest release
+      id: compare
+      if: inputs.baseline-digest != '' && steps.state.outputs.found != 'true' && steps.state.outputs.earlier == ''
+      shell: bash
+      env:
+        CANDIDATE_REF: ${{ inputs.candidate-repository }}@${{ inputs.digest }}
+        BASELINE_REF: ${{ inputs.release-repository }}@${{ inputs.baseline-digest }}
+      run: '"$GITHUB_ACTION_PATH/../compare-release.sh"'
+
+    - name: Tag the image
+      if: steps.state.outputs.earlier == '' && steps.compare.outputs.unchanged != 'true' && steps.state.outputs.missing != ''
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.candidate-repository }}@${{ inputs.digest }}
+        MISSING: ${{ steps.state.outputs.missing }}
+      run: |
+        args=()
+        while IFS= read -r tag; do
+          [ -n "$tag" ] && args+=(--tag "$tag")
+        done <<<"$MISSING"
+        docker buildx imagetools create --prefer-index=false "${args[@]}" "$IMAGE"
+
+    - name: Make the build cache current
+      id: cache
+      if: inputs.cache-repository != '' && inputs.cache-digest != '' && ((steps.state.outputs.earlier == '' && steps.compare.outputs.unchanged != 'true') || inputs.always-update-cache == 'true')
+      shell: bash
+      env:
+        CACHE_IMAGE: ${{ inputs.candidate-repository }}@${{ inputs.cache-digest }}
+        CACHE: ${{ inputs.cache-repository }}
+      run: docker buildx imagetools create --prefer-index=false --tag "$CACHE:current" "$CACHE_IMAGE"
+
+    - name: Summarize the release
+      shell: bash
+      env:
+        RELEASED: ${{ steps.compare.outputs.unchanged == 'true' && inputs.baseline-digest || steps.state.outputs.digest }}
+        EARLIER: ${{ steps.state.outputs.earlier }}
+        UNCHANGED: ${{ steps.compare.outputs.unchanged == 'true' }}
+        DIGEST: ${{ inputs.digest }}
+        BASELINE: ${{ inputs.baseline-digest }}
+        BASELINE_COMMIT: ${{ steps.compare.outputs.revision }}
+        CACHE_MOVED: ${{ steps.cache.outcome == 'success' }}
+        NAMED: ${{ steps.state.outputs.named }}
+      run: '"$GITHUB_ACTION_PATH/../summarize.sh"'

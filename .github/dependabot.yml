@@ -2,7 +2,7 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: "/"
+    directories: ["/", "/image/build-action", "/image/health-action", "/image/push-action", "/image/release-action"]
     schedule:
       interval: weekly
     # The org's seven-day soak, which Renovate applies to everything else.

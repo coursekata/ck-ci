@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Fake aws: logs the call and prints a password for `ecr get-login-password`.
-echo "aws $*" >>"$FAKE_STATE/calls"
-echo fake-password

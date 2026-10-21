@@ -1,0 +1,4 @@
+source-path=SCRIPTDIR
+external-sources=true
+# Each bats test runs in its own subshell, so a variable one test sets is meant to stay there.
+disable=SC2030,SC2031

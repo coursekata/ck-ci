@@ -1,0 +1,138 @@
+name: image-build
+description: Builds an image with bake to an OCI layout on the runner, runs its tests on that build, and loads it into Docker for the caller's checks. It pushes nothing.
+
+# One image per call. The caller checks out its repository and sets on this step's env any secrets
+# its bake file reads. Its checks run on the `image` output, and push-action then pushes the
+# layout, so the registry receives the bytes the tests and checks ran on.
+
+inputs:
+  target:
+    description: Bake target that builds the image.
+    required: true
+  test-target:
+    description: Bake target that builds the image's tests. Its stage must build FROM the stage `target` builds, so the tests run on the built image.
+    required: true
+  cache-repository:
+    description: Repository whose `current` tag names the build cache to build from. Leave empty to build without a cache.
+    default: ""
+  bake-file:
+    description: Bake file, relative to the working directory.
+    default: docker-bake.hcl
+  no-cache:
+    description: Build every step from scratch, ignoring cache-repository.
+    default: "false"
+  extra-tags:
+    description: Tags to add to sha-<commit> and run-<run id>, in docker/metadata-action's tags format. Every name is output as `tags`.
+    default: ""
+
+outputs:
+  image:
+    description: The image loaded into Docker for this runner's platform, for checks before the push. Empty when the image does not ship this runner's platform.
+    value: ${{ steps.load.outputs.image }}
+  digest:
+    description: The built image's digest.
+    value: ${{ fromJSON(steps.build.outputs.metadata)[inputs.target]['containerimage.digest'] }}
+  layout:
+    description: The OCI layout holding the built image, for push-action.
+    value: ${{ runner.temp }}/image-build/${{ inputs.target }}/image
+  cache-digest:
+    description: The build cache's digest.
+    value: ${{ steps.cache-out.outputs.digest }}
+  cache-layout:
+    description: The OCI layout holding the build cache, for push-action.
+    value: ${{ runner.temp }}/image-build/${{ inputs.target }}/cache
+  tags:
+    description: Every tag name, one per line, sha-<commit> and run-<run id> first.
+    value: ${{ steps.meta.outputs.tag-names }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up buildx and this job's builder
+      id: builder
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      with:
+        version: v0.38.0
+        driver: docker-container
+        driver-opts: image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
+        cache-binary: false
+
+    - name: Check the image and test targets
+      id: preflight
+      shell: bash
+      env:
+        IMAGE_BUILD_BAKE_FILE: ${{ inputs.bake-file }}
+        IMAGE_BUILD_TARGET: ${{ inputs.target }}
+        IMAGE_BUILD_TEST: ${{ inputs.test-target }}
+      run: '"$GITHUB_ACTION_PATH/../preflight.sh"'
+
+    - name: Pin the cache
+      id: cache
+      if: inputs.no-cache != 'true' && inputs.cache-repository != ''
+      shell: bash
+      env:
+        CACHE: ${{ inputs.cache-repository }}
+      run: '"$GITHUB_ACTION_PATH/../pin-cache.sh"'
+
+    # One set of tag settings makes the OCI labels and the tag names, so the version label matches
+    # the tags. The labels go into the build and the loaded image alike; the tag names only to the output.
+    # The highest tag is the version label and the first name. metadata-action's highest default
+    # priority is 1000, so these keep the commit first and the run second whatever extra-tags adds.
+    - name: Make the image's labels and tags
+      id: meta
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+      with:
+        bake-target: ${{ inputs.target }}
+        tags: |
+          type=sha,format=long,priority=2000
+          type=raw,value=run-${{ github.run_id }},priority=1999
+          ${{ inputs.extra-tags }}
+
+    # Exported to an OCI layout and a cache directory on the runner. Nothing leaves it here. Bake
+    # writes nothing outside the bake file's directory unless allowed.
+    - name: Build the image
+      id: build
+      uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+      with:
+        builder: ${{ steps.builder.outputs.name }}
+        source: .
+        files: |
+          ${{ inputs.bake-file }}
+          ${{ steps.meta.outputs.bake-file-labels }}
+        targets: ${{ inputs.target }}
+        allow: fs.write=${{ runner.temp }}/image-build/${{ inputs.target }}
+        provenance: false
+        sbom: false
+        set: |
+          ${{ inputs.target }}.output=type=oci,dest=${{ runner.temp }}/image-build/${{ inputs.target }}/image,tar=false,oci-mediatypes=true,compression=gzip
+          ${{ inputs.target }}.cache-to=type=local,dest=${{ runner.temp }}/image-build/${{ inputs.target }}/cache,mode=max,oci-mediatypes=true,image-manifest=true
+          ${{ steps.cache.outputs.from && format('*.cache-from={0}', steps.cache.outputs.from) || '' }}
+
+    # The cache directory is an OCI layout whose index names one manifest: the cache push-action sends.
+    - name: Read the build cache's digest
+      id: cache-out
+      shell: bash
+      env:
+        INDEX: ${{ runner.temp }}/image-build/${{ inputs.target }}/cache/index.json
+      run: echo "digest=$(jq -r '.manifests[0].digest' "$INDEX")" >>"$GITHUB_OUTPUT"
+
+    - name: Run the tests on the built image
+      shell: bash
+      env:
+        IMAGE_BUILD_BAKE_FILE: ${{ inputs.bake-file }}
+        IMAGE_BUILD_TEST: ${{ inputs.test-target }}
+        IMAGE_BUILD_STAGE: ${{ steps.preflight.outputs.stage }}
+        IMAGE_BUILD_LAYOUT: ${{ runner.temp }}/image-build/${{ inputs.target }}/image
+        IMAGE_BUILD_DIGEST: ${{ fromJSON(steps.build.outputs.metadata)[inputs.target]['containerimage.digest'] }}
+      run: '"$GITHUB_ACTION_PATH/../run-tests.sh"'
+
+    - name: Load the image for this runner's checks
+      id: load
+      shell: bash
+      env:
+        IMAGE_BUILD_BAKE_FILE: ${{ inputs.bake-file }}
+        IMAGE_BUILD_LABELS_FILE: ${{ steps.meta.outputs.bake-file-labels }}
+        IMAGE_BUILD_TARGET: ${{ inputs.target }}
+        IMAGE_BUILD_PLATFORMS: ${{ steps.preflight.outputs.platforms }}
+        IMAGE_BUILD_LAYOUT: ${{ runner.temp }}/image-build/${{ inputs.target }}/image
+      run: '"$GITHUB_ACTION_PATH/../load-image.sh"'
