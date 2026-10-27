@@ -1,5 +1,5 @@
 name: image-release
-description: Copies a changed image by digest, unchanged, to a release repository under the given tags, and moves the cache repository's current tag to its build cache. An image that matches the newest release apart from build metadata is released nowhere and tagged nowhere.
+description: Copies a changed image by digest, unchanged, to a release repository under the given tags and `latest`, and moves the cache repository's current tag to its build cache. An image that matches the newest release apart from build metadata is released nowhere and tagged nowhere.
 
 # One image per call, with the caller logged in to write the release and cache repositories. The
 # caller finds the baseline, the newest image in the release repository, with the registry's own
@@ -79,11 +79,14 @@ runs:
       env:
         IMAGE: ${{ inputs.candidate-repository }}@${{ inputs.digest }}
         MISSING: ${{ steps.state.outputs.missing }}
+        RELEASE: ${{ inputs.release-repository }}
       run: |
         args=()
         while IFS= read -r tag; do
           [ -n "$tag" ] && args+=(--tag "$tag")
         done <<<"$MISSING"
+        # latest moves to every release, for development pulls; the repository lets only that name move.
+        args+=(--tag "$RELEASE:latest")
         docker buildx imagetools create --prefer-index=false "${args[@]}" "$IMAGE"
 
     - name: Make the build cache current
