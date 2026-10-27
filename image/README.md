@@ -69,9 +69,9 @@ The caller passes the baseline, the newest image in the release repository, foun
 
 1. It reads what the release repository holds under this commit's tags. If `sha-<commit>` already names the candidate, an earlier attempt of this commit released it, and the action adds only the tags still missing. If it names another image, an earlier release of this commit stands: nothing is tagged, the action outputs that digest, and the summary and a notice say so. This comes first because a release cut short leaves the candidate as the newest image, and compared with itself it would read as unchanged.
 2. Otherwise, with a baseline, it compares the candidate with it. A match makes the candidate unchanged (see When nothing changed): nothing is tagged or copied, and the cache stays unless `always-update-cache` is set.
-3. Otherwise it copies the candidate from the candidate repository under every tag, in one copy, then moves the cache repository's `current` tag to this build's cache. With no baseline the image releases as new, and the summary says so.
+3. Otherwise it copies the candidate from the candidate repository under every tag and `latest`, in one copy, then moves the cache repository's `current` tag to this build's cache. Every release moves `latest` in the release repository, for development pulls; nothing that deploys or pins names it, and the repository must let that one name move. With no baseline the image releases as new, and the summary says so.
 
-Any tag that already names another image fails the release, since release tags never move: a tag like `main` cannot be one of them. A rebuild by hand sets `always-update-cache` to move the cache whatever the release does. Every copy keeps the bytes: `--prefer-index=false` stops buildx wrapping a single-platform image in a new index.
+Any tag that already names another image fails the release, since release tags never move, except `latest`, which every release re-points: a tag like `main` cannot be one of them. A rebuild by hand sets `always-update-cache` to move the cache whatever the release does. Every copy keeps the bytes: `--prefer-index=false` stops buildx wrapping a single-platform image in a new index.
 
 The summary names the released digest and the tags on it, or the release the build matched by its commit and digest, and says whether this build's cache became current.
 
@@ -313,7 +313,7 @@ The caller sets the variable on the `build-action` step's `env`, so the same bak
 | Two merges close together | The second may release its own bytes even if they match the first's; Renovate proposes the newer |
 | A consumer's Renovate cannot read the release repository | No pull request opens; the run logs the refusal, and the next daily run tries again |
 | The kick after a release fails | The release stands; the next daily Renovate run opens the pull request |
-| A tag other than `sha-<commit>` already names another image | The release fails: release tags never move |
+| A tag other than `sha-<commit>` already names another image | The release fails: release tags never move, except `latest`, which every release re-points |
 | A merge whose message carries `[skip ci]` | No run starts; that commit gets no release, and the next merge releases its changes |
 | An image with no cache yet, or a misnamed cache repository | The build starts cold, with a notice |
 | The registry refuses a lookup | The build or release fails rather than guess |
