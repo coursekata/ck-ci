@@ -1,8 +1,9 @@
-# Action SHAs only. Renovate leaves every action reference to Dependabot.
+# Action SHAs only. Renovate leaves every action reference to Dependabot. "/" reaches only the
+# workflows and a root action.yml, so each image action's folder is listed too, by the -action suffix.
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directories: ["/", "/image/build-action", "/image/health-action", "/image/push-action", "/image/release-action"]
+    directories: ["/", "/image/*-action"]
     schedule:
       interval: weekly
     # The org's seven-day soak, which Renovate applies to everything else.

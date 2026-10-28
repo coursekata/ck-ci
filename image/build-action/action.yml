@@ -1,4 +1,4 @@
-name: image-build
+name: build-action
 description: Builds an image with bake to an OCI layout on the runner, runs its tests on that build, and loads it into Docker for the caller's checks. It pushes nothing.
 
 # One image per call. The caller checks out its repository and sets on this step's env any secrets

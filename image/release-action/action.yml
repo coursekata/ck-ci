@@ -1,4 +1,4 @@
-name: image-release
+name: release-action
 description: Releases the head of the branch. Copies a changed image by digest, unchanged, to a release repository under the given tags, makes it the latest release and `latest`, and moves the cache repository's current tag to its build cache. An image that matches the latest release apart from build metadata is released nowhere and tagged nowhere, and a run whose commit is no longer the head of its branch writes nothing.
 
 # One image per call, with the caller logged in to write the release and cache repositories. The

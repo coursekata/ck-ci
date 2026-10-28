@@ -1,4 +1,4 @@
-name: image-health
+name: check-health-action
 description: Runs an image's own HEALTHCHECK in a container with no network and no mounts, and fails if it does not become healthy.
 
 # The image must already be in Docker, such as build-action's `image` output. An image that declares

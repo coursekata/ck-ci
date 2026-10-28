@@ -5,14 +5,14 @@ Four composite actions build, check, push and release a repository's container i
 | Action | Does |
 |---|---|
 | `image/build-action` | Builds the image once to an OCI layout on the runner, runs its tests on that build, and loads it into Docker for the caller's checks. It pushes nothing. |
-| `image/health-action` | Runs the image's own `HEALTHCHECK` in a container with no network and no mounts, and fails if it does not become healthy. |
+| `image/check-health-action` | Runs the image's own `HEALTHCHECK` in a container with no network and no mounts, and fails if it does not become healthy. |
 | `image/push-action` | Pushes the tested layout and its build cache, byte for byte, by digest and untagged, to a candidate repository. |
 | `image/release-action` | On the head of the branch, copies a pushed image by digest to a release repository under its tags, makes it the latest release and makes its build cache current, or, when the image matches the latest release apart from build metadata, releases nothing. It builds nothing. |
 
 A caller orders them in two jobs of its own workflow:
 
 ```
-build job:    build-action  ->  checks (health-action, the caller's own, or none)  ->  push-action
+build job:    build-action  ->  checks (check-health-action, the caller's own, or none)  ->  push-action
 release job:  release-action
 ```
 
@@ -37,7 +37,7 @@ Inputs: `target` and `test-target` (required), `cache-repository`, `bake-file` (
 
 A check runs on build-action's `image` output, between build-action and push-action, and a failed check stops the job before anything is pushed.
 
-For an image with a `HEALTHCHECK`, use health-action. It runs the image under compose, from a compose file this repository ships: the image is the only service, with no mounts and no network, so its code holds none of the job's credentials, files or outputs. Docker decides what healthy means, from the image's own interval, timeout, retries and start period, and the run fails if the container turns unhealthy or exits. Ten minutes is only a backstop. On failure the step prints the container's logs. An image that declares no `HEALTHCHECK`, or `HEALTHCHECK NONE`, gets a warning and no run, because compose calls a service with no health check healthy the moment it starts. An empty `image` fails the step, so a caller on a runner whose platform the image does not ship guards it with `if:`.
+For an image with a `HEALTHCHECK`, use check-health-action. It runs the image under compose, from a compose file this repository ships: the image is the only service, with no mounts and no network, so its code holds none of the job's credentials, files or outputs. Docker decides what healthy means, from the image's own interval, timeout, retries and start period, and the run fails if the container turns unhealthy or exits. Ten minutes is only a backstop. On failure the step prints the container's logs. An image that declares no `HEALTHCHECK`, or `HEALTHCHECK NONE`, gets a warning and no run, because compose calls a service with no health check healthy the moment it starts. An empty `image` fails the step, so a caller on a runner whose platform the image does not ship guards it with `if:`.
 
 For an image with no `HEALTHCHECK`, such as a batch job, the caller writes its own step and runs the image the same way, with `docker run --rm --network none` on build-action's `image` and no mounts or env file. Project code never runs as a process on the runner. ck-datalake's dbt runner, for example, must start and stop in its preflight when it has no task environment:
 
@@ -140,7 +140,7 @@ target "app-test" {
 
 Set each stage's `WORKDIR` once. Two steps that produce the same layer, such as a second `WORKDIR` that changes nothing, share one creation time in the registry cache, so a cached rebuild rewrites the image's history and gets a new digest. Every merge then releases a new digest from unchanged code, and a deployment that follows it redeploys an identical image.
 
-A served image declares a `HEALTHCHECK` that probes it over loopback, since health-action gives it no network of its own:
+A served image declares a `HEALTHCHECK` that probes it over loopback, since check-health-action gives it no network of its own:
 
 ```dockerfile
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
@@ -198,18 +198,18 @@ jobs:
       # log in: cache-read role on a pull request, candidate role otherwise; skipped on a fork's
       # pull request, which gets no OIDC token
       - id: build
-        uses: coursekata/ck-ci/image/build-action@v0.1.0
+        uses: coursekata/ck-ci/image/build-action@v0.2.0
         with:
           target: app
           test-target: app-test
           cache-repository: ${{ !github.event.pull_request.head.repo.fork && '<cache repo>' || '' }}
           no-cache: ${{ github.event_name == 'workflow_dispatch' }}
-      - uses: coursekata/ck-ci/image/health-action@v0.1.0
+      - uses: coursekata/ck-ci/image/check-health-action@v0.2.0
         with:
           image: ${{ steps.build.outputs.image }}
       - id: push
         if: github.event_name != 'pull_request'
-        uses: coursekata/ck-ci/image/push-action@v0.1.0
+        uses: coursekata/ck-ci/image/push-action@v0.2.0
         with:
           candidate-repository: <candidate repo>
           layout: ${{ steps.build.outputs.layout }}
@@ -236,7 +236,7 @@ jobs:
       # log in with the release role, as the build job does: the keys go to the ECR login step,
       # never into the job's environment
       - id: release
-        uses: coursekata/ck-ci/image/release-action@v0.1.0
+        uses: coursekata/ck-ci/image/release-action@v0.2.0
         with:
           candidate-repository: <candidate repo>
           release-repository: <release repo>
@@ -316,8 +316,8 @@ The caller sets the variable on the `build-action` step's `env`, so the same bak
 | A replaced cache expires while a build that pinned it runs | The build fails; a re-run reads the current cache |
 | A release on a branch the `release` environment does not allow | The release job is refused |
 | An image does not become healthy, or its process exits | As a failed test: the pull request's check fails, or nothing is pushed |
-| An image declares no `HEALTHCHECK` | health-action warns; the job goes on |
-| An image does not ship the runner's platform | A warning; no image is loaded, and health-action given the empty image fails unless the caller guards it |
+| An image declares no `HEALTHCHECK` | check-health-action warns; the job goes on |
+| An image does not ship the runner's platform | A warning; no image is loaded, and check-health-action given the empty image fails unless the caller guards it |
 | A caller runs no check before the push | Its workflow says so; nothing in the actions refuses it |
 | A fork's pull request | It gets no OIDC token, so the caller skips the login and passes no cache repository; it builds and tests cold |
 | A fork's pull request builds an image that reads the build secret | The build gets the secret empty and fails where it uses it |
@@ -330,7 +330,7 @@ The caller sets the variable on the `build-action` step's `env`, so the same bak
 - On ECR, only review keeps the caller's pin on a release tag of this repository.
 - Third-party code that runs inside a default-branch build shapes that image. The cache carries it into later builds until its step or an earlier one changes, or a run by hand rebuilds it.
 - Anyone who can run the workflow by hand can rebuild the default branch without the cache and replace the cache, with no merge. It builds only reviewed code, but anything that code does not pin resolves again.
-- health-action covers the runner's platform only, with no network and no other services.
+- check-health-action covers the runner's platform only, with no network and no other services.
 - A release nobody pins is not deployed. The open Renovate pull request is the only signal that a consumer is behind, and a consumer without Renovate learns of releases from no one.
 - The latest release is the baseline, not the deployed image. The highest run tag says which release is latest, so release order rests on GitHub numbering runs in the order it creates them: each release's run was created after the release before it, because its commit reached the branch after that release's head check.
 - bake runs with the job's environment, so a bake file that names a job variable, such as the OIDC request token, as an `env=` secret or a variable would pass it into the build. Review of the bake file is the guard.
