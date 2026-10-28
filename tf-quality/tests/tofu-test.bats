@@ -221,3 +221,18 @@ EOF
   assert_success
   assert_line "tofu test in a"
 }
+
+@test "module downloads ignore the caller git hook environment" {
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+  module upstream
+  git -C upstream init -q
+  git -C upstream add main.tf
+  git -C upstream -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false commit -qm fixture
+  module consumer
+  printf 'module "remote" {\n  source = "git::file://%s/upstream"\n}\n' "$PWD" >>consumer/main.tf
+  GIT_DIR="$PWD/nonexistent.git" GIT_WORK_TREE="$PWD/not-a-worktree" \
+    GIT_INDEX_FILE="$PWD/not-an-index" GIT_ALLOW_PROTOCOL=file \
+    hook tofu-test.sh consumer/main.tf
+  assert_success
+  assert_line "tofu test in consumer"
+}
