@@ -4,8 +4,12 @@
 # a docker-container builder, which CI sets up the way build-action does. The preflight
 # reads a real bake definition, the tests run on a built OCI layout and a test stage
 # that never uses it is refused, the layout pushes byte for byte, a missing reference
-# reads as empty and an unreachable registry as an error, fixture images pass,
-# fail and skip their health checks, and the release reads its tags in a real registry.
+# reads as empty and an unreachable registry or one that refuses the read is an error,
+# fixture images pass, fail and skip their health checks, and the release runs whole,
+# with crane, against a real git repository: it releases the head, releases nothing for
+# an unchanged build or a commit no longer the head, finishes a release cut short,
+# finishes an earlier release of the commit from its own image, and refuses a tag. crane
+# must be on PATH.
 set -euo pipefail
 TESTS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 P=$(cd "$TESTS/.." && pwd)
@@ -18,6 +22,7 @@ die() {
   exit 1
 }
 check() { "$@" || die "check failed: $*"; }
+refusing=""
 # Deletes the work directory only when it is the one this run made: its name, a real directory and
 # the same real path it was made at, so no folder above it has been swapped for a symlink. With the
 # marker written at creation it removes the tree; without, the run stopped before writing it, and
@@ -36,8 +41,10 @@ remove_work() {
     rmdir -- "$WORK" 2>/dev/null || echo "::warning::Left $WORK in place: it has no marker and is not empty." >&2
   fi
 }
-# Removes the images the test loads into Docker and the work directory, so a run leaves none.
+# Removes the refusing registry, the images the test loads into Docker and the work directory, so a
+# run leaves none.
 cleanup() {
+  [ -z "$refusing" ] || docker rm -f "$refusing" >/dev/null 2>&1 || true
   docker image rm -f image-build/app:candidate image-build/served:candidate health/served health/sick \
     health/app >/dev/null 2>&1 || true
   remove_work
@@ -65,6 +72,25 @@ check [ -z "$("$P/digest-of.sh" "$REG/release/app:nothing")" ]
 if "$P/digest-of.sh" localhost:1/release/app:nothing >/dev/null 2>&1; then
   die "an unreachable registry read as a missing reference"
 fi
+
+step "A registry that refuses a read is an error, not a missing reference"
+# A real registry that refuses every read without a login. Its htpasswd holds a password nobody
+# knows, so the refusal comes back over HTTP, as a registry answers a login without access.
+refusing=$(docker run -d --rm -p 127.0.0.1::5000 -v "$TESTS/fixture/htpasswd:/auth/htpasswd:ro" \
+  -e REGISTRY_AUTH=htpasswd -e REGISTRY_AUTH_HTPASSWD_REALM=ci -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+  registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8)
+host=$(docker port "$refusing" 5000/tcp | head -1 | sed 's/^127\.0\.0\.1/localhost/')
+for _ in $(seq 20); do curl -s -o /dev/null "http://$host/v2/" && break; sleep 0.5; done
+denied=$host/release/app
+if "$P/read-registry.sh" digest "$denied:t" >/dev/null 2>"$WORK/denied.log"; then
+  die "a refused tag read as a missing reference"
+fi
+check grep -q UNAUTHORIZED "$WORK/denied.log"
+if "$P/read-registry.sh" ls "$denied" >/dev/null 2>"$WORK/denied.log"; then
+  die "a refused listing read as a missing repository"
+fi
+check grep -q UNAUTHORIZED "$WORK/denied.log"
+docker rm -f "$refusing" >/dev/null
 
 cd "$TESTS/fixture"
 export GITHUB_OUTPUT="$WORK/output"
@@ -148,14 +174,14 @@ release_build() {
   docker buildx imagetools create --prefer-index=false --tag "$REG/release/cmp:$tag" "oci-layout://$WORK/cmp-$tag@$d" >/dev/null 2>&1 || return 1
   echo "$d"
 }
-# same <candidate> <baseline>: prints compare-release's answer. Called in $(...), where -e does not
-# hold, so a build that failed or a config it could not read fails here, not as a false "change".
+# same <candidate> <baseline>: prints the release's comparison of the two builds' configs, as crane
+# reads them. Called in $(...), where -e does not hold, so a build that failed or a config it could
+# not read fails here, not as a false "change".
 same() {
   [ -n "$1" ] && [ -n "$2" ] || return 1
-  : >"$WORK/cmp.out"
-  CANDIDATE_REF=$REG/release/cmp@$1 BASELINE_REF=$REG/release/cmp@$2 GITHUB_OUTPUT="$WORK/cmp.out" "$P/compare-release.sh" >"$WORK/cmp.log" || return 1
-  ! grep -q '::warning::' "$WORK/cmp.log" || return 1
-  grep '^unchanged=' "$WORK/cmp.out"
+  local build release
+  build=$("$P/read-configs.sh" "$REG/release/cmp@$1") && release=$("$P/read-configs.sh" "$REG/release/cmp@$2") || return 1
+  jq -L "$P" -r --argjson r "$release" 'include "release"; compare($r) | "unchanged=\(.unchanged)"' <<<"$build"
 }
 
 step "A rebuild that changes only the labels each run sets compares unchanged; other content does not"
@@ -173,19 +199,94 @@ e=$(release_build app eee e) || die "the app build failed"
 f=$(release_build app fff f --set app.target=runtime-checked) || die "the checked app build failed"
 check [ "$(same "$e" "$f")" = unchanged=false ]
 
-step "A release cut short is finished, and a commit already released stands"
-rel=$REG/release/rel
-this=0123456789abcdef0123456789abcdef01234567
-# The first attempt released $a under sha-<commit> and stopped before run-1: a re-run adds run-1.
-docker buildx imagetools create --prefer-index=false --tag "$rel:sha-$this" "$REG/release/cmp@$a" >/dev/null 2>&1
-: >"$GITHUB_OUTPUT"
-TAGS="sha-$this"$'\n'run-1 RELEASE=$rel DIGEST=$a GITHUB_SHA=$this "$P/read-release.sh" >/dev/null
-check grep -qx "earlier=" "$GITHUB_OUTPUT"
+step "An index compares by its platforms' configs"
+# index <digest> <tag>: wraps the build in an index of its one platform and prints the index's digest.
+index() { crane index append -m "$REG/release/cmp@$1" -t "$REG/release/cmp:$2" >/dev/null 2>&1 && crane digest "$REG/release/cmp:$2"; }
+ia=$(index "$a" index-a) || die "the index of a failed"
+ic=$(index "$c" index-c) || die "the index of c failed"
+check [ "$(same "$ia" "$b")" = unchanged=true ]
+check [ "$(same "$ic" "$a")" = unchanged=false ]
+
+# The release runs whole, against a git repository whose main is the branch it releases from and a
+# release repository of its own each run, so a registry kept between runs holds no tag it did not
+# write. The candidates are the comparison builds: b is a with other build metadata, c and d differ.
+git init -q --bare "$WORK/git/acme/app"
+git init -q "$WORK/clone"
+# merge: puts a new commit on main and prints it.
+merge() {
+  git -C "$WORK/clone" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m change
+  git -C "$WORK/clone" push -q "$WORK/git/acme/app" HEAD:refs/heads/main
+  git -C "$WORK/clone" rev-parse HEAD
+}
+rel=$REG/release/rel-$RANDOM$RANDOM
+export GITHUB_STEP_SUMMARY="$WORK/summary"
+# release <commit> <run id> <digest>: runs the release as that run would, with fresh outputs, under
+# the commit's and run's tags and v-<commit>, a tag of the caller's own.
+release() {
+  : >"$GITHUB_OUTPUT"
+  : >"$GITHUB_STEP_SUMMARY"
+  GITHUB_SERVER_URL="file://$WORK/git" GITHUB_REPOSITORY=acme/app GITHUB_REF=${REF:-refs/heads/main} GITHUB_SHA=$1 GITHUB_RUN_ID=$2 \
+    CANDIDATE=$REG/release/cmp RELEASE=${TO:-$rel} CACHE=${CACHE:-} CACHE_DIGEST=${CACHE_DIGEST:-} ALWAYS_UPDATE_CACHE=false TOKEN="" \
+    DIGEST=$3 TAGS="sha-$1"$'\n'"run-$2"$'\n'"v-$1" "$P/release.sh" >"$WORK/release.log" 2>&1 || {
+    cat "$WORK/release.log"
+    return 1
+  }
+}
+names() { "$P/digest-of.sh" "$rel:$1"; }
+
+step "The first release is tagged, made the latest, given latest, and its cache made current"
+crane copy "$REG/candidate/app@$cache_digest" "$REG/release/cmp:cache" >/dev/null 2>&1
+one=$(merge)
+cache=$REG/cache/rel-$RANDOM$RANDOM
+CACHE=$cache CACHE_DIGEST=$cache_digest release "$one" 1 "$a" || die "the first release failed"
+check grep -qx "released=true" "$GITHUB_OUTPUT"
+check [ "$(names "sha-$one")" = "$a" ] && check [ "$(names "v-$one")" = "$a" ] && check [ "$(names run-1)" = "$a" ]
+check [ "$(names latest)" = "$a" ]
+check [ "$("$P/digest-of.sh" "$cache:current")" = "$cache_digest" ]
+
+step "A build unchanged from the latest release releases nothing"
+two=$(merge)
+release "$two" 2 "$b" || die "the unchanged release failed"
+check grep -qx "released=false" "$GITHUB_OUTPUT"
 check grep -qx "digest=$a" "$GITHUB_OUTPUT"
-check [ "$(awk '/^missing<</ { f = 1; next } f && /^EOF$/ { exit } f' "$GITHUB_OUTPUT")" = "$rel:run-1" ]
-# A later build of the same commit, whatever it holds, leaves that release standing.
-: >"$GITHUB_OUTPUT"
-TAGS="sha-$this"$'\n'run-2 RELEASE=$rel DIGEST=$b GITHUB_SHA=$this "$P/read-release.sh" >/dev/null
-check grep -qx "earlier=$a" "$GITHUB_OUTPUT"
+check [ -z "$(names "sha-$two")" ] && check [ -z "$(names "v-$two")" ] && check [ -z "$(names run-2)" ]
+
+step "A run whose commit is no longer the head writes nothing"
+release "$one" 3 "$c" || die "the run behind the head failed"
+check grep -qx "digest=" "$GITHUB_OUTPUT"
+check [ -z "$(names run-3)" ] && check [ "$(names latest)" = "$a" ]
+check grep -q "The branch has moved on to $two" "$GITHUB_STEP_SUMMARY"
+
+step "A release cut short before its run tag is finished by the head's next run"
+three=$(merge)
+docker buildx imagetools create --prefer-index=false --tag "$rel:sha-$three" "$REG/release/cmp@$c" >/dev/null 2>&1
+release "$three" 4 "$c" || die "finishing the release failed"
+check grep -qx "released=true" "$GITHUB_OUTPUT"
+check [ "$(names run-4)" = "$c" ] && check [ "$(names "v-$three")" = "$c" ] && check [ "$(names latest)" = "$c" ]
+
+step "A release cut short after its run tag gets latest"
+four=$(merge)
+docker buildx imagetools create --prefer-index=false --tag "$rel:sha-$four" --tag "$rel:run-5" "$REG/release/cmp@$d" >/dev/null 2>&1
+release "$four" 5 "$d" || die "finishing the release failed"
+check grep -qx "released=true" "$GITHUB_OUTPUT"
+check [ "$(names "v-$four")" = "$d" ] && check [ "$(names latest)" = "$d" ]
+
+step "An earlier release of this commit, of another build, gets its missing tags; this build gets none"
+five=$(merge)
+crane copy "$REG/release/cmp@$c" "$rel:sha-$five" >/dev/null 2>&1
+release "$five" 6 "$b" || die "finishing the earlier release failed"
+check grep -qx "released=false" "$GITHUB_OUTPUT"
+check grep -qx "digest=$c" "$GITHUB_OUTPUT"
+check [ "$(names "v-$five")" = "$c" ] && check [ "$(names run-6)" = "$c" ] && check [ "$(names latest)" = "$c" ]
+check grep -q "Nothing was tagged with $b" "$GITHUB_STEP_SUMMARY"
+
+step "A branch that does not exist, a tag, or a registry that cannot be read, fails rather than release"
+if REF=refs/heads/gone release "$five" 7 "$c"; then die "a missing branch released"; fi
+git -C "$WORK/clone" -c user.name=t -c user.email=t@t -c tag.gpgsign=false tag -a v1 -m v1 "$five"
+git -C "$WORK/clone" push -q "$WORK/git/acme/app" refs/tags/v1
+if REF=refs/tags/v1 release "$five" 7 "$c"; then die "a run on a tag passed"; fi
+check grep -q "::error::refs/tags/v1 is not a branch" "$WORK/release.log"
+if TO=localhost:1/release/rel release "$five" 7 "$c"; then die "an unreachable registry released"; fi
+check grep -q "::error::Could not read localhost:1/release/rel:sha-$five." "$WORK/release.log"
 
 step "integration passed"

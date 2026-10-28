@@ -7,7 +7,7 @@ Four composite actions build, check, push and release a repository's container i
 | `image/build-action` | Builds the image once to an OCI layout on the runner, runs its tests on that build, and loads it into Docker for the caller's checks. It pushes nothing. |
 | `image/health-action` | Runs the image's own `HEALTHCHECK` in a container with no network and no mounts, and fails if it does not become healthy. |
 | `image/push-action` | Pushes the tested layout and its build cache, byte for byte, by digest and untagged, to a candidate repository. |
-| `image/release-action` | Copies a pushed image by digest to a release repository under its tags and makes its build cache current, or, when the image matches the newest release apart from build metadata, releases and tags nothing. It builds nothing. |
+| `image/release-action` | On the head of the branch, copies a pushed image by digest to a release repository under its tags, makes it the latest release and makes its build cache current, or, when the image matches the latest release apart from build metadata, releases nothing. It builds nothing. |
 
 A caller orders them in two jobs of its own workflow:
 
@@ -20,7 +20,7 @@ A failed step stops its job, so nothing is pushed after a failed check and nothi
 
 ## What it guarantees
 
-Every released digest is exactly the bytes that one default-branch run built and tested, released by a job of that same run that never builds, and tagged with the one commit that built them. push-action sends the tested layout itself, so the registry receives the bytes the tests ran on, and the checks run on an export of the same build whose layers are checked against it. A build that matches the newest release apart from build metadata is released nowhere and tagged nowhere. No pull request can write the release repository, every build reads its cache only from the cache repository's `current` tag, pinned by digest, and nothing deploys a release until a consumer pins its digest in its own files.
+Every released digest is exactly the bytes that one default-branch run built and tested, released by a job of that same run that never builds, and tagged with the one commit that built them. push-action sends the tested layout itself, so the registry receives the bytes the tests ran on, and the checks run on an export of the same build whose layers are checked against it. A build that matches the latest release apart from build metadata is released nowhere and tagged nowhere, and only the head of the branch releases. No pull request can write the release repository, every build reads its cache only from the cache repository's `current` tag, pinned by digest, and nothing deploys a release until a consumer pins its digest in its own files.
 
 ## build-action
 
@@ -65,36 +65,39 @@ Inputs, all required: `candidate-repository` and build-action's `layout`, `diges
 
 ## release-action
 
-The caller passes the baseline, the newest image in the release repository, found with the registry's own tooling (see The caller), or empty when the repository holds none. The action reads no registry listing itself, so it is the same on every registry.
+Only the head of the branch releases. The action first reads the run's branch from GitHub with the job's token, which needs only `contents: read`; if a newer commit is on it, the run writes nothing, and the run for that commit releases its changes. The head holds every change still on the branch, so this needs no particular merge style or history shape, and an older run, a re-run among them, can never move `latest`, the cache or a consumer's pin backwards, as long as releases of one branch run one at a time, as the release job below does.
 
-1. It reads what the release repository holds under this commit's tags. If `sha-<commit>` already names the candidate, an earlier attempt of this commit released it, and the action adds only the tags still missing. If it names another image, an earlier release of this commit stands: nothing is tagged, the action outputs that digest, and the summary and a notice say so. This comes first because a release cut short leaves the candidate as the newest image, and compared with itself it would read as unchanged.
-2. Otherwise, with a baseline, it compares the candidate with it. A match makes the candidate unchanged (see When nothing changed): nothing is tagged or copied, and the cache stays unless `always-update-cache` is set.
-3. Otherwise it copies the candidate from the candidate repository under every tag and `latest`, in one copy, then moves the cache repository's `current` tag to this build's cache. Every release moves `latest` in the release repository, for development pulls; nothing that deploys or pins names it, and the repository must let that one name move. With no baseline the image releases as new, and the summary says so.
+The latest release is the image under the highest `run-<run id>` tag, the order a consumer's Renovate pins in. The action does every registry read and write with [crane](https://github.com/google/go-containerregistry/tree/main/cmd/crane), through the login the caller already made, and finds the latest release with `crane ls`.
 
-Any tag that already names another image fails the release, since release tags never move, except `latest`, which every release re-points: a tag like `main` cannot be one of them. A rebuild by hand sets `always-update-cache` to move the cache whatever the release does. Every copy keeps the bytes: `--prefer-index=false` stops buildx wrapping a single-platform image in a new index.
+1. It reads what the release repository holds under this commit's tags. If `sha-<commit>` already names the candidate, an earlier attempt of this commit released it, and the action adds only the tags still missing. If it names another image, that earlier release of this commit stands and gets any of its tags still missing, and nothing is tagged with this build. This comes first because once `sha-<commit>` names a release, that release stands: a later build of the commit finishes it, and is never compared with it or released over it.
+2. Otherwise it compares the candidate with the latest release. A match makes the candidate unchanged (see When nothing changed): nothing is copied, and the cache stays unless `always-update-cache` is set.
+3. Otherwise it copies the candidate under every tag but the run tag.
+4. If this commit's release is not yet the latest, it adds this run's `run-<run id>` tag, which makes it the latest. A release whose run tag a run cut short never wrote gets it from the head's next run, whichever build that run made.
+5. It points `latest` at this commit's release, or at the latest release when nothing changed, for development pulls; nothing that deploys or pins names it, and the repository must let that one name move. Then it moves the cache repository's `current` tag to this build's cache, when this build is the release.
 
-The summary names the released digest and the tags on it, or the release the build matched by its commit and digest, and says whether this build's cache became current.
+The writes go in that order so a run that stops between any two leaves nothing a consumer reads: until its run tag is written a release is not the latest, and the head's next run finishes it. Any tag that already names another image fails the release, since release tags never move, so a tag like `main` cannot be one of them. `latest` is the one name that moves, and the action moves it itself, so the tags must not include it. A rebuild by hand sets `always-update-cache` to move the cache whatever the release does. Every copy keeps the bytes: crane copies and tags a manifest by digest, unchanged.
 
-Inputs: `candidate-repository`, `release-repository`, `digest` and `tags` (required), `baseline-digest`, `cache-repository`, `cache-digest`, `always-update-cache`. Outputs: `released`, true when this run copied the image, and `digest`, the released digest or, for an unchanged image, the baseline's.
+The summary names the release and the tags on it, or the release the build matched by its commit and digest, and says whether `latest` and the cache moved. On a commit that is no longer the head it names the head that releases instead.
+
+Inputs: `candidate-repository`, `release-repository`, `digest` and `tags` (required; `tags` must include `sha-<commit>` and `run-<run id>`, as build-action's do), `cache-repository`, `cache-digest`, `always-update-cache`. `baseline-digest`, which v0.1.3 took, is still accepted and ignored, with a warning to drop it. Outputs: `released`, true when this build is this commit's release, copied by this run or an earlier attempt of it, and `digest`, this commit's release or, for an unchanged image, the latest release, empty when the commit is no longer the head.
 
 ## When nothing changed
 
-A merge that changes nothing in the image, or only its tests or docs, still builds, and the warm cache keeps that build cheap. Its image differs from the newest release only in build metadata, so release-action releases nothing and tags nothing, and the summary names the release it matched. No consumer sees anything, because nothing deploys a release until its pin moves.
+A merge that changes nothing in the image, or only its tests or docs, still builds, and the warm cache keeps that build cheap. Its image differs from the latest release only in build metadata, so release-action releases nothing, and the summary names the release it matched. No consumer sees anything, because nothing deploys a release until its pin moves.
 
-The two images match when, for every platform, their configs are identical once the `created`, `revision` and `version` labels, the image's creation time and each history entry's time are removed. What stays is the layers' content digests, every instruction's history entry and the runtime settings, so a `HEALTHCHECK` change shows in the history even though buildx's parsed config drops it. Any other label, such as one the Dockerfile writes, still counts. A different set of platforms, a config the action cannot read, or no baseline is a change, and the image releases as new.
+The two images match when, for every platform, their configs are identical once the `created`, `revision` and `version` labels, the image's creation time and each history entry's time are removed. What stays is the layers' content digests, every instruction's history entry and the runtime settings, a `HEALTHCHECK` among them. Any other label, such as one the Dockerfile writes, still counts. A different set of platforms, or a release repository with no release, is a change, and the image releases as new. A config the action cannot read fails the release rather than guess.
 
 Its limits:
 
-- The newest release is the baseline, not the image any consumer deploys. A consumer still on an older pin sees every release since in one pull request, which proposes only the newest.
-- The comparison reads buildx's view of each config. A change visible only in a config field buildx does not read, with no history entry, would compare as unchanged; every Dockerfile instruction writes a history entry.
+- The latest release is the baseline, not the image any consumer deploys. A consumer still on an older pin sees every release since in one pull request, which proposes only the latest.
 - A cold rebuild never matches a release: BuildKit stamps the directories it creates with the build time, so even a `COPY` and a `RUN` that writes nothing give new layer digests, and a run by hand's layers reach the consumer with the next merge. The history-time rule serves the cached case, where a step's recorded time can move while its layers are reused.
-- Two merges close together: the second may compare before the first has released, and then releases its own bytes even if they match. Renovate proposes the newer, and the older is never pinned.
+- Two merges close together: once the second is on the branch, the first's run releases nothing, and the second's release carries both.
 
 ## On a run by hand
 
 A build that reads the cache reuses each step whose instruction and earlier steps are unchanged, whatever that step would install today. A run by hand that sets `no-cache` on build-action and `always-update-cache` on release-action builds every step from scratch, runs the tests and checks as a push does, and on release makes its cache current. A cold build does not reproduce its layers: BuildKit stamps the directories it creates, a `COPY`'s parent and a `RUN`'s mount points among them, with the build time, so the rebuilt image differs from every release. On a commit already released, which the default branch's head usually is, that release stands, the cache moves to the rebuilt layers, and the next merge releases them, with a pull request to the consumer. On a commit not yet released it releases as new. The next push reads the new cache, so the image it releases carries the rebuilt layers.
 
-Run it when a cached layer is suspect, or when an image installs packages it does not pin and needs newer ones now. A change to the base image already rebuilds every step. A push that was already building when the run released carries the earlier layers and puts them back in the cache, so run it again once that push has released.
+Run it when a cached layer is suspect, or when an image installs packages it does not pin and needs newer ones now. A change to the base image already rebuilds every step. A merge that lands while it builds makes it no longer the head, so it releases nothing and moves no cache: run it again once that merge has released.
 
 ## Adopting it
 
@@ -154,8 +157,8 @@ A caller pins each action by a release tag of this repository, never a commit SH
 
 Each image gets one workflow with two jobs, and a third where the repository deploys its own images:
 
-- **build**, named `image / build`, the required check. It logs in with the cache-read role on a pull request, or the candidate role when it will push, then runs build-action, its checks and, except on a pull request, push-action.
-- **release**, on the default branch only, in the `release` environment. It logs in with the release role, finds the baseline with the registry's own tooling, and runs release-action on the build job's outputs.
+- **build**, named `image / build`, the required check. It logs in with the cache-read role on a pull request, or the candidate role when it will push, then runs build-action, its checks and, except on a pull request, push-action. A newer commit on the same branch or pull request cancels it, since only the head releases.
+- **release**, on the default branch only, in the `release` environment. It logs in with the release role and runs release-action on the build job's outputs. It runs one at a time per branch and is never cancelled, so a release that starts finishes. Without that group, two releases of one branch can interleave their reads and writes, and the head check no longer orders them.
 - **pin**, where the repository is its own consumer: when the release job released, it dispatches the repository's Renovate workflow, so the pin's pull request opens within minutes instead of on the next daily run. A consumer in another repository gets the pull request from its own Renovate's schedule.
 
 Each login hands its keys to the registry login step alone, never to the job's environment, so no build step can read them. Neither job reads or writes the GitHub Actions cache. The workflow has no path filters: every commit builds every image, the cache keeps an unchanged image cheap, and only a changed image gets its `sha-<commit>` tag.
@@ -169,13 +172,13 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions: {}
-concurrency:
-  group: image-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
     name: image / build
     runs-on: ubuntu-24.04-arm
+    concurrency:
+      group: image-build-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     cache-mode: none
     permissions:
       contents: read
@@ -219,28 +222,19 @@ jobs:
     runs-on: ubuntu-24.04-arm
     cache-mode: none
     environment: release
+    # One release at a time per branch, never cancelled: a release cut short is left for the head's
+    # next run to finish.
+    concurrency:
+      group: image-release-${{ github.ref }}
+    # contents: read lets release-action read the branch's head.
     permissions:
       contents: read
       id-token: write
     outputs:
       released: ${{ steps.release.outputs.released }}
     steps:
-      # log in with the release role, as the build job does: the keys go to the ECR login step and
-      # to the baseline step, never into the job's environment
-      # The baseline: the newest tagged image in the release repository, or empty when it holds
-      # none. JSON output applies the query once over every page, where text output applies it per
-      # page of 100; the tag filter leaves out a multi-platform index's untagged children.
-      - id: baseline
-        env:
-          AWS_ACCESS_KEY_ID: ${{ steps.aws.outputs.aws-access-key-id }}
-          AWS_SECRET_ACCESS_KEY: ${{ steps.aws.outputs.aws-secret-access-key }}
-          AWS_SESSION_TOKEN: ${{ steps.aws.outputs.aws-session-token }}
-          AWS_REGION: <region>
-          RELEASE_NAME: <release repository name>
-        run: |
-          d=$(aws ecr describe-images --repository-name "$RELEASE_NAME" --filter tagStatus=TAGGED \
-            --query 'sort_by(imageDetails, &imagePushedAt)[-1].imageDigest' --output json | jq -r '. // empty')
-          echo "digest=$d" >>"$GITHUB_OUTPUT"
+      # log in with the release role, as the build job does: the keys go to the ECR login step,
+      # never into the job's environment
       - id: release
         uses: coursekata/ck-ci/image/release-action@v0.1.0
         with:
@@ -248,7 +242,6 @@ jobs:
           release-repository: <release repo>
           cache-repository: <cache repo>
           digest: ${{ needs.build.outputs.digest }}
-          baseline-digest: ${{ steps.baseline.outputs.digest }}
           cache-digest: ${{ needs.build.outputs.cache-digest }}
           tags: ${{ needs.build.outputs.tags }}
           always-update-cache: ${{ github.event_name == 'workflow_dispatch' }}
@@ -304,17 +297,20 @@ The caller sets the variable on the `build-action` step's `env`, so the same bak
 | A build, test or check fails on the default branch | Nothing is pushed or released for that commit; a re-run or the next merge releases |
 | A merge that changes nothing in the image, or only its tests or docs | Nothing is released or tagged and no pull request opens; the summary names the release it matched |
 | A merge that changes only a label the Dockerfile writes | A change: the image releases |
-| The release repository is empty | The image releases as new |
-| The candidate ships other platforms than the newest release | A change: the image releases |
-| The release fails partway | Re-run failed jobs: the release adds only the tags still missing on the digest its first attempt released |
+| The candidate ships other platforms than the latest release | A change: the image releases |
+| A release is cut short at any point | No consumer sees it until its run tag is written. The head's next run finishes it, adding the tags still missing; a merge since then releases past it |
 | A released run is re-run in full and rebuilds another digest | The first release stands, and the summary says so |
 | A run by hand | A cold build, whose layers differ from every release's: on a released commit that release stands and the cache moves to the rebuilt layers, which the next merge releases; on an unreleased commit it releases as new |
-| The release repository is empty, or the caller's lookup yields nothing | The image releases as new, and the summary says no baseline was given |
-| Two merges close together | The second may release its own bytes even if they match the first's; Renovate proposes the newer |
+| The release repository holds no release | The image releases as new, and the summary says so |
+| Two merges close together | The first's build is cancelled, or its release writes nothing, once the second is on the branch; the second's release carries both |
+| A run whose commit is no longer the head, a re-run of an old run among them | It writes nothing; the summary names the head, whose run releases |
+| GitHub cannot be read for the branch's head | The release fails rather than guess |
+| The run's ref is a tag, or anything but a branch | The release fails before it reads anything |
 | A consumer's Renovate cannot read the release repository | No pull request opens; the run logs the refusal, and the next daily run tries again |
 | The kick after a release fails | The release stands; the next daily Renovate run opens the pull request |
-| A tag other than `sha-<commit>` already names another image | The release fails: release tags never move, except `latest`, which every release re-points |
-| A merge whose message carries `[skip ci]` | No run starts; that commit gets no release, and the next merge releases its changes |
+| A tag other than `sha-<commit>` already names another image | The release fails: release tags never move |
+| The tags include `latest` | The release fails before any write: the action moves `latest` itself, after the run tag |
+| A merge whose message carries `[skip ci]`, or a push no workflow sees | No run starts; a run still releasing the commit before it is no longer the head and writes nothing, and the next merge releases both |
 | An image with no cache yet, or a misnamed cache repository | The build starts cold, with a notice |
 | The registry refuses a lookup | The build or release fails rather than guess |
 | A replaced cache expires while a build that pinned it runs | The build fails; a re-run reads the current cache |
@@ -330,20 +326,20 @@ The caller sets the variable on the `build-action` step's `env`, so the same bak
 ## What it does not claim
 
 - A pull request and its merge are two builds. The pull request tested a build of its merge commit, and the default-branch run builds the merged commit again, once, and releases that build. Pinned inputs, such as base images by digest and lockfiles, give both the same software. Unpinned ones can differ, and the default-branch tests are what stand behind the released bytes.
-- Nothing is signed. A released digest maps to its commit through `sha-<commit>` and to its run through `run-<run id>`.
+- Nothing is signed. A released digest maps to its commit through `sha-<commit>`, and to the run that made it the latest through `run-<run id>`: the run that built it, unless a later run finished its release.
 - On ECR, only review keeps the caller's pin on a release tag of this repository.
 - Third-party code that runs inside a default-branch build shapes that image. The cache carries it into later builds until its step or an earlier one changes, or a run by hand rebuilds it.
 - Anyone who can run the workflow by hand can rebuild the default branch without the cache and replace the cache, with no merge. It builds only reviewed code, but anything that code does not pin resolves again.
 - health-action covers the runner's platform only, with no network and no other services.
 - A release nobody pins is not deployed. The open Renovate pull request is the only signal that a consumer is behind, and a consumer without Renovate learns of releases from no one.
-- The newest release is the baseline, not the deployed image, and only the registry says which release is newest. The caller's baseline step is what answers that, with the registry's own tooling.
+- The latest release is the baseline, not the deployed image. The highest run tag says which release is latest, so release order rests on GitHub numbering runs in the order it creates them: each release's run was created after the release before it, because its commit reached the branch after that release's head check.
 - bake runs with the job's environment, so a bake file that names a job variable, such as the OIDC request token, as an `env=` secret or a variable would pass it into the build. Review of the bake file is the guard.
 - The build secret reaches third-party code inside every build that reads it.
 
 ## Changing a pin
 
-`build-action`, `push-action` and `release-action` each name the buildx version in their `docker/setup-buildx-action` step, `build-action` also names the BuildKit image by tag and digest, and this repository's integration test sets up the same pair. Renovate's pull request for a new release changes every copy. BuildKit and buildx move together, and a new 0.x minor waits for approval on the dependency dashboard. buildx does every registry read, push and copy. Docker and its compose plugin come with the runner image, so nothing else is installed. Actions are pinned by commit SHA.
+`build-action` and `push-action` each name the buildx version in their `docker/setup-buildx-action` step, `build-action` also names the BuildKit image by tag and digest, and this repository's integration test sets up the same pair. Renovate's pull request for a new release changes every copy. BuildKit and buildx move together, and a new 0.x minor waits for approval on the dependency dashboard. buildx does the builds' registry reads and pushes. release-action installs crane from its release in `install-crane.sh`, pinned by version and by each architecture's checksum; neither Renovate nor Dependabot moves a checksum, so a new crane is a change by hand to its three lines. Docker and its compose plugin come with the runner image. Actions are pinned by commit SHA.
 
 ## Working on it
 
-The scripts sit beside the actions, and each action calls them as `$GITHUB_ACTION_PATH/../<script>.sh`. `tests/` holds their bats tests, which run against a fake `docker` in `tests/bin`, and `tests/integration.sh`, which runs them against real BuildKit, Docker and a registry on `localhost:5000`, or the `REG` it is given, with a docker-container builder as the current builder.
+The scripts sit beside the actions, and each action calls them as `$GITHUB_ACTION_PATH/../<script>.sh`. release-action runs one script, `release.sh`, which reads the facts, has `release.jq` decide every write, makes the writes in order and writes the summary; `release.jq` reads and writes nothing, so its tests are plain data in and out. `tests/` holds their bats tests, which run against a fake `docker` in `tests/bin`, and `tests/integration.sh`, which runs them against real BuildKit, Docker, crane and a registry on `localhost:5000`, or the `REG` it is given, with a docker-container builder as the current builder.

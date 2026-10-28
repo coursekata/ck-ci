@@ -4,7 +4,7 @@ name: ci
 # OpenTofu bar against its fixture in tf-quality/tests/fixture, so a change to either workflow runs
 # here before any caller can pin it, at the cost of a second secret and CVE scan. hooks runs this
 # repository's pre-commit hooks, and image the image actions' scripts against real tools, then the
-# actions themselves on the fixture.
+# actions themselves on the fixture. crane-arm64 installs crane on arm64.
 # ci-passed is the single stable status check the main branch ruleset points at.
 
 on:
@@ -83,6 +83,9 @@ jobs:
           driver-opts: image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
           cache-binary: false
 
+      - name: Install crane, as release-action does
+        run: image/install-crane.sh
+
       - name: Run the image actions' scripts against real tools
         run: image/tests/integration.sh
 
@@ -90,6 +93,8 @@ jobs:
       # evaluates fails here before any caller pins a release. bake resolves a bake file's paths
       # against the working directory, which a composite step cannot change, so the fixture is
       # copied to the workspace root first. No cache repository, so the build starts cold.
+      # release-action reads this run's ref from GitHub to check it is the head: on a pull request,
+      # its merge ref.
       - name: Put the fixture where the actions run
         run: cp -R image/tests/fixture/. .
 
@@ -122,27 +127,81 @@ jobs:
           cache-digest: ${{ steps.push.outputs.cache-digest }}
           tags: ${{ steps.build.outputs.tags }}
 
-      - name: The actions' outputs name the released build
+      # A release cut short after its commit tag, before its run tag: the head's next run finishes it.
+      - name: Cut a release short
         env:
+          IMAGE: localhost:5000/candidate/app@${{ steps.push.outputs.digest }}
+        run: docker buildx imagetools create --prefer-index=false --tag "localhost:5000/release/cut:sha-$GITHUB_SHA" "$IMAGE"
+
+      - id: finish
+        uses: ./image/release-action
+        with:
+          candidate-repository: localhost:5000/candidate/app
+          release-repository: localhost:5000/release/cut
+          digest: ${{ steps.push.outputs.digest }}
+          tags: ${{ steps.build.outputs.tags }}
+
+      # A merge to main while this runs moves the head on, a pull request's merge ref with it, and
+      # each release then rightly writes nothing. A head read after both releases that is still this
+      # commit was the head throughout, since a head that moved on never comes back, so both must
+      # have released.
+      - name: Each release named the build, or wrote nothing once the head moved on
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
           BUILT: ${{ steps.build.outputs.digest }}
           RELEASED: ${{ steps.release.outputs.digest }}
           FLAG: ${{ steps.release.outputs.released }}
+          FINISHED: ${{ steps.finish.outputs.digest }}
+          FINISH_FLAG: ${{ steps.finish.outputs.released }}
+          BUILD_TAGS: ${{ steps.build.outputs.tags }}
         run: |
-          if [ -z "$BUILT" ] || [ "$RELEASED" != "$BUILT" ] || [ "$FLAG" != true ]; then
-            echo "::error::built=$BUILT released=$RELEASED released-flag=$FLAG"
-            exit 1
-          fi
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader
+          GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_VALUE_0
+          head=$(git ls-remote "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_REF" | awk -v r="$GITHUB_REF" '$2 == r { print $1 }')
+          [ -n "$head" ] || { echo "::error::Could not read $GITHUB_REF's head."; exit 1; }
+          lines() { jq -Rsc 'split("\n") | map(select(. != "")) | sort'; }
+          tags() { image/read-registry.sh ls "$1" | lines; }
+          # expect <step> <digest> <flag> <tags now> <tags released> <tags before>
+          expect() {
+            if [ -n "$BUILT" ] && [ "$2" = "$BUILT" ] && [ "$3" = true ] && [ "$4" = "$5" ]; then return; fi
+            if [ "$head" != "$GITHUB_SHA" ] && [ -z "$2" ] && [ "$3" = false ] && [ "$4" = "$6" ]; then
+              echo "::notice::The head moved on to $head, so $1 rightly released nothing."
+              return
+            fi
+            echo "::error::$1: built=$BUILT released=$2 released-flag=$3 tags=$4 head=$head"
+            return 1
+          }
+          expect release "$RELEASED" "$FLAG" "$(tags localhost:5000/release/app)" "$(printf '%s\nlatest\n' "$BUILD_TAGS" | lines)" '[]'
+          expect finish "$FINISHED" "$FINISH_FLAG" "$(tags localhost:5000/release/cut)" \
+            "$(printf 'sha-%s\nrun-%s\nlatest\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" | lines)" "$(echo "sha-$GITHUB_SHA" | lines)"
+
+  # The image job installs crane on x86_64; callers build on arm64 too, so its pinned checksum is
+  # checked here.
+  crane-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install crane, as the actions do
+        run: image/install-crane.sh
+
+      - run: crane version
 
   ci-passed:
     if: always()
-    needs: [quality, tf-quality, hooks, image]
+    needs: [quality, tf-quality, hooks, image, crane-arm64]
     runs-on: ubuntu-latest
     steps:
       - name: Assert all required CI jobs succeeded
         run: |
-          for r in "${{ needs.quality.result }}" "${{ needs.tf-quality.result }}" "${{ needs.hooks.result }}" "${{ needs.image.result }}"; do
+          for r in "${{ needs.quality.result }}" "${{ needs.tf-quality.result }}" "${{ needs.hooks.result }}" "${{ needs.image.result }}" "${{ needs.crane-arm64.result }}"; do
             if [ "$r" != "success" ]; then
-              echo "quality: ${{ needs.quality.result }}, tf-quality: ${{ needs.tf-quality.result }}, hooks: ${{ needs.hooks.result }}, image: ${{ needs.image.result }}"
+              echo "quality: ${{ needs.quality.result }}, tf-quality: ${{ needs.tf-quality.result }}, hooks: ${{ needs.hooks.result }}, image: ${{ needs.image.result }}, crane-arm64: ${{ needs.crane-arm64.result }}"
               exit 1
             fi
           done

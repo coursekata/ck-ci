@@ -1,6 +1,6 @@
-# Loaded by every image test file. The fake docker in bin/ comes first on PATH, and every test gets
-# a fresh directory that the fake answers from and logs its calls to, holding the step's output and
-# summary files too.
+# Loaded by every image test file. The fake docker in bin/ comes first on PATH, and fresh_state gives
+# a test a fresh directory that the fake answers from and logs its calls to, holding the step's output
+# and summary files too.
 bats_require_minimum_version 1.5.0
 # bats sets its own BATS_LIB_PATH, so the usual install folders are added to it, not defaulted.
 export BATS_LIB_PATH="$BATS_LIB_PATH:/usr/lib:/opt/homebrew/lib:/usr/local/lib"
@@ -43,5 +43,3 @@ step_output() {
     index($0, n "<<") == 1 { d = substr($0, length(n) + 3) }
   ' "$GITHUB_OUTPUT"
 }
-
-summary() { cat "$GITHUB_STEP_SUMMARY"; }

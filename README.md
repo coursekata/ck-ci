@@ -8,7 +8,7 @@ The repository is public, so a workflow in either organization calls it with no 
 
 | Path | Called by |
 |---|---|
-| `image/build-action`, `image/health-action`, `image/push-action` and `image/release-action` | A repository's image workflow. Each image is built once and tested on that build, the caller's checks run before anything is pushed, the push sends exactly the tested bytes, and a release copies that digest when it differs from the newest release and does nothing for an unchanged image. A consumer pins a release by digest, and Renovate moves the pin. [`image/README.md`](image/README.md) is the contract. |
+| `image/build-action`, `image/health-action`, `image/push-action` and `image/release-action` | A repository's image workflow. Each image is built once and tested on that build, the caller's checks run before anything is pushed, the push sends exactly the tested bytes, and only the head of the branch releases: a release copies that digest when it differs from the latest release and does nothing for an unchanged image. A consumer pins a release by digest, and Renovate moves the pin. [`image/README.md`](image/README.md) is the contract. |
 | `.github/workflows/quality.yml` | Any repository's `ci.yml`, for the secret and CVE scans. |
 | `.github/workflows/tf-quality.yml`, with the hook config it runs and its own hooks' scripts in `tf-quality/` | Each OpenTofu repository's `ci.yml`, in place of `quality.yml`, which it runs. |
 | `.github/workflows/renovate.yml` | The Renovate workflow of a repository whose CI holds cloud credentials. |
