@@ -83,7 +83,7 @@ jobs:
       # tflint fetches its plugins from the GitHub API, where an anonymous client gets 60 requests an
       # hour shared across the runner's IP, so it uses the ambient run token. No cache: the bar's
       # tools come fresh from their pinned revs on every run.
-      - uses: j178/prek-action@af4d4fcb6922b8e6f65c0426947125fcc38794ce # v3.0.2
+      - uses: j178/prek-action@44924fe9ef4a6f88253c4b6b1bf11c689d3ce53d # v3.1.0
         env:
           SKIP: gitleaks-system
           GITHUB_TOKEN: ${{ github.token }}
