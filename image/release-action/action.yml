@@ -28,10 +28,6 @@ inputs:
   always-update-cache:
     description: Move the cache even when this build is not the release, because an earlier release of the commit stands or the image is unchanged. Set true when the image was built without the cache.
     default: "false"
-  baseline-digest:
-    description: Ignored. The action finds the latest release itself.
-    deprecationMessage: release-action ignores baseline-digest since v0.1.4 and finds the latest release itself. Drop the input, and the step that looked the baseline up.
-    default: ""
 
 outputs:
   digest:

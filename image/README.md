@@ -79,7 +79,7 @@ The writes go in that order so a run that stops between any two leaves nothing a
 
 The summary names the release and the tags on it, or the release the build matched by its commit and digest, and says whether `latest` and the cache moved. On a commit that is no longer the head it names the head that releases instead.
 
-Inputs: `candidate-repository`, `release-repository`, `digest` and `tags` (required; `tags` must include `sha-<commit>` and `run-<run id>`, as build-action's do), `cache-repository`, `cache-digest`, `always-update-cache`. `baseline-digest`, which v0.1.3 took, is still accepted and ignored, with a warning to drop it. Outputs: `released`, true when this build is this commit's release, copied by this run or an earlier attempt of it, and `digest`, this commit's release or, for an unchanged image, the latest release, empty when the commit is no longer the head.
+Inputs: `candidate-repository`, `release-repository`, `digest` and `tags` (required; `tags` must include `sha-<commit>` and `run-<run id>`, as build-action's do), `cache-repository`, `cache-digest`, `always-update-cache`. Outputs: `released`, true when this build is this commit's release, copied by this run or an earlier attempt of it, and `digest`, this commit's release or, for an unchanged image, the latest release, empty when the commit is no longer the head.
 
 ## When nothing changed
 
