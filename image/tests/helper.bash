@@ -20,15 +20,6 @@ fresh_state() {
   : >"$GITHUB_STEP_SUMMARY"
 }
 
-# registry_has <ref> <digest>: the fake registry resolves ref to digest.
-registry_has() { printf '%s %s\n' "$1" "$2" >>"$FAKE_STATE/registry"; }
-
-# registry_fails <ref> <message>: the fake registry answers ref with an error.
-registry_fails() { printf '%s %s\n' "$1" "$2" >>"$FAKE_STATE/registry-errors"; }
-
-# image_config <ref> <json>: what the fake registry answers for <ref>'s parsed config.
-image_config() { mkdir -p "$FAKE_STATE/config" && printf '%s\n' "$2" >"$FAKE_STATE/config/$(tr '/:@' '___' <<<"$1")"; }
-
 # bake_prints <json>: what the fake bake prints for --print.
 bake_prints() { printf '%s\n' "$1" >"$FAKE_STATE/bake-print"; }
 

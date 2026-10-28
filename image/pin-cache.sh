@@ -5,7 +5,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-d=$("$here/digest-of.sh" "$CACHE:current")
+d=$("$here/read-registry.sh" digest "$CACHE:current")
 if [ -n "$d" ]; then
   echo "from=type=registry,ref=$CACHE@$d" >>"$GITHUB_OUTPUT"
 else

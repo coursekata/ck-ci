@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # The image actions' scripts against real tools: BuildKit and buildx, Docker and
-# compose, and an OCI registry on localhost:5000. The current buildx builder must be
-# a docker-container builder, which CI sets up the way build-action does. The preflight
-# reads a real bake definition, the tests run on a built OCI layout and a test stage
-# that never uses it is refused, the layout pushes byte for byte, a missing reference
-# reads as empty and an unreachable registry or one that refuses the read is an error,
-# fixture images pass, fail and skip their health checks, and the release runs whole,
-# with crane, against a real git repository: it releases the head, releases nothing for
-# an unchanged build or a commit no longer the head, finishes a release cut short,
-# finishes an earlier release of the commit from its own image, and refuses a tag. crane
-# must be on PATH.
+# compose, crane, and an OCI registry on localhost:5000. The current buildx builder
+# must be a docker-container builder, which CI sets up the way build-action does, and
+# crane must be on PATH. A missing tag or repository reads as empty, and an unreachable
+# registry or one that refuses the read is an error. The preflight reads a real bake
+# definition, the tests run on a built OCI layout and a test stage that never uses it is
+# refused, the layout pushes byte for byte, the build pins the current cache, fixture
+# images pass, fail and skip their health checks, and the release runs whole against a
+# real git repository: it releases the head, releases nothing for an unchanged build or a
+# commit no longer the head, finishes a release cut short, finishes an earlier release of
+# the commit from its own image, and refuses a tag.
 set -euo pipefail
 TESTS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 P=$(cd "$TESTS/.." && pwd)
@@ -67,11 +67,13 @@ info=$(docker buildx inspect --bootstrap) || die "cannot inspect the current bui
 grep -qE '^Driver: +docker-container$' <<<"$info" ||
   die "the current buildx builder must use the docker-container driver"
 
-step "A missing reference reads as empty; an unreachable registry is an error"
-check [ -z "$("$P/digest-of.sh" "$REG/release/app:nothing")" ]
-if "$P/digest-of.sh" localhost:1/release/app:nothing >/dev/null 2>&1; then
+step "A missing repository reads as empty; an unreachable registry is an error"
+check [ -z "$("$P/read-registry.sh" digest "$REG/nothing-$RANDOM$RANDOM:t")" ]
+check [ -z "$("$P/read-registry.sh" ls "$REG/nothing-$RANDOM$RANDOM")" ]
+if "$P/read-registry.sh" digest localhost:1/release/app:nothing >/dev/null 2>"$WORK/unreachable.log"; then
   die "an unreachable registry read as a missing reference"
 fi
+check grep -qx "::error::Could not read localhost:1/release/app:nothing." "$WORK/unreachable.log"
 
 step "A registry that refuses a read is an error, not a missing reference"
 # A real registry that refuses every read without a login. Its htpasswd holds a password nobody
@@ -115,15 +117,31 @@ check grep -q "::error::app-unrelated-test never built on the image" "$WORK/unre
 
 step "The tested layout and its cache push byte for byte, untagged, and a digest the layout lacks pushes nothing"
 cache_digest=$(jq -r '.manifests[0].digest' "$WORK/cache/index.json")
-CANDIDATE=$REG/candidate/app LAYOUT="$WORK/layout" DIGEST="$digest" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-1-1 "$P/push.sh" >/dev/null 2>&1
-check [ "$("$P/digest-of.sh" "$REG/candidate/app@$digest")" = "$digest" ]
-check [ "$("$P/digest-of.sh" "$REG/candidate/app:cache-1-1")" = "$cache_digest" ]
-check [ "$(curl -s "http://$REG/v2/candidate/app/tags/list" | jq -c .tags)" = '["cache-1-1"]' ]
+candidate=$REG/candidate/app-$RANDOM$RANDOM
+CANDIDATE=$candidate LAYOUT="$WORK/layout" DIGEST="$digest" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-1-1 "$P/push.sh" >/dev/null 2>&1
+check [ "$(crane manifest "$candidate@$digest" | sha256sum | cut -d' ' -f1)" = "${digest#sha256:}" ]
+check [ "$("$P/read-registry.sh" digest "$candidate:cache-1-1")" = "$cache_digest" ]
+check [ "$(crane ls "$candidate")" = cache-1-1 ]
+check [ -z "$("$P/read-registry.sh" digest "$candidate:nothing")" ]
 missing=sha256:$(printf '0%.0s' {1..64})
-if CANDIDATE=$REG/candidate/app LAYOUT="$WORK/layout" DIGEST="$missing" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-2-1 "$P/push.sh" >/dev/null 2>&1; then
+other=$REG/candidate/other-$RANDOM$RANDOM
+if CANDIDATE=$other LAYOUT="$WORK/layout" DIGEST="$missing" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-2-1 "$P/push.sh" >"$WORK/push.log" 2>&1; then
   die "a digest the layout does not hold was pushed"
 fi
-check [ -z "$("$P/digest-of.sh" "$REG/candidate/app:cache-2-1")" ]
+check grep -q "::error::$WORK/layout does not hold $missing alone" "$WORK/push.log"
+check [ -z "$("$P/read-registry.sh" ls "$other")" ]
+
+step "The build pins the current cache by digest; with none it starts cold, and an unreachable registry fails"
+pinned=$REG/cache/pin-$RANDOM$RANDOM
+CACHE=$pinned GITHUB_OUTPUT="$WORK/cold" "$P/pin-cache.sh" >"$WORK/cold.log"
+check grep -qx "::notice::No cache at $pinned:current yet, so this build starts cold." "$WORK/cold.log"
+check [ ! -s "$WORK/cold" ]
+crane copy "$candidate:cache-1-1" "$pinned:current" >/dev/null 2>&1
+CACHE=$pinned GITHUB_OUTPUT="$WORK/warm" "$P/pin-cache.sh"
+check grep -qx "from=type=registry,ref=$pinned@$cache_digest" "$WORK/warm"
+if CACHE=localhost:1/cache/app GITHUB_OUTPUT="$WORK/unreachable" "$P/pin-cache.sh" >/dev/null 2>&1; then
+  die "an unreachable registry pinned no cache and went on"
+fi
 
 step "The image loads for checks with the build's labels, and only with the tested build's layers"
 printf '{"target":{"app":{"labels":{"org.opencontainers.image.revision":"abc"}}}}' >"$WORK/labels.json"
@@ -171,7 +189,7 @@ release_build() {
     "$@" --progress=plain "$target" >/dev/null 2>&1 || return 1
   d=$(jq -r --arg t "$target" '.[$t]["containerimage.digest"]' "$WORK/$tag.json")
   [[ $d =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
-  docker buildx imagetools create --prefer-index=false --tag "$REG/release/cmp:$tag" "oci-layout://$WORK/cmp-$tag@$d" >/dev/null 2>&1 || return 1
+  crane push "$WORK/cmp-$tag" "$REG/release/cmp:$tag" >/dev/null 2>&1 || return 1
   echo "$d"
 }
 # same <candidate> <baseline>: prints the release's comparison of the two builds' configs, as crane
@@ -232,17 +250,17 @@ release() {
     return 1
   }
 }
-names() { "$P/digest-of.sh" "$rel:$1"; }
+names() { "$P/read-registry.sh" digest "$rel:$1"; }
 
 step "The first release is tagged, made the latest, given latest, and its cache made current"
-crane copy "$REG/candidate/app@$cache_digest" "$REG/release/cmp:cache" >/dev/null 2>&1
+crane copy "$candidate@$cache_digest" "$REG/release/cmp:cache" >/dev/null 2>&1
 one=$(merge)
 cache=$REG/cache/rel-$RANDOM$RANDOM
 CACHE=$cache CACHE_DIGEST=$cache_digest release "$one" 1 "$a" || die "the first release failed"
 check grep -qx "released=true" "$GITHUB_OUTPUT"
 check [ "$(names "sha-$one")" = "$a" ] && check [ "$(names "v-$one")" = "$a" ] && check [ "$(names run-1)" = "$a" ]
 check [ "$(names latest)" = "$a" ]
-check [ "$("$P/digest-of.sh" "$cache:current")" = "$cache_digest" ]
+check [ "$("$P/read-registry.sh" digest "$cache:current")" = "$cache_digest" ]
 
 step "A build unchanged from the latest release releases nothing"
 two=$(merge)
@@ -259,14 +277,15 @@ check grep -q "The branch has moved on to $two" "$GITHUB_STEP_SUMMARY"
 
 step "A release cut short before its run tag is finished by the head's next run"
 three=$(merge)
-docker buildx imagetools create --prefer-index=false --tag "$rel:sha-$three" "$REG/release/cmp@$c" >/dev/null 2>&1
+crane copy "$REG/release/cmp@$c" "$rel:sha-$three" >/dev/null 2>&1
 release "$three" 4 "$c" || die "finishing the release failed"
 check grep -qx "released=true" "$GITHUB_OUTPUT"
 check [ "$(names run-4)" = "$c" ] && check [ "$(names "v-$three")" = "$c" ] && check [ "$(names latest)" = "$c" ]
 
 step "A release cut short after its run tag gets latest"
 four=$(merge)
-docker buildx imagetools create --prefer-index=false --tag "$rel:sha-$four" --tag "$rel:run-5" "$REG/release/cmp@$d" >/dev/null 2>&1
+crane copy "$REG/release/cmp@$d" "$rel:sha-$four" >/dev/null 2>&1
+crane tag "$rel@$d" run-5 >/dev/null 2>&1
 release "$four" 5 "$d" || die "finishing the release failed"
 check grep -qx "released=true" "$GITHUB_OUTPUT"
 check [ "$(names "v-$four")" = "$d" ] && check [ "$(names latest)" = "$d" ]
