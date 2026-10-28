@@ -13,11 +13,11 @@ HEALTHCHECK --interval=1s CMD true
 FROM runtime AS test
 RUN grep -qx v1 /app/version
 
-# A test that fails on this image, which run-tests.sh must fail on.
+# A test that fails on this image, which test-image.sh must fail on.
 FROM runtime AS failing
 RUN grep -qx v2 /app/version
 
-# A test stage that never uses the image, which run-tests.sh must refuse.
+# A test stage that never uses the image, which test-image.sh must refuse.
 FROM busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS unrelated
 RUN echo "tests nothing about runtime"
 

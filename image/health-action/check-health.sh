@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Runs an image's own HEALTHCHECK under compose, as the only service, with no mounts and no network,
-# and fails if it does not become healthy. The image must already be in Docker. health.jq decides
-# from the image's inspect whether it runs; one that does not warns and runs nothing.
-# usage: health.sh <image>
+# and fails if it does not become healthy. The image must already be in Docker. check-health.jq
+# decides from the image's inspect whether it runs; one that does not warns and runs nothing.
+# env: IMAGE
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-image=${1:-}
+image=${IMAGE:-}
 if [ -z "$image" ]; then
   echo "::error::No image was given to check. build-action loads none when the image does not ship this runner's platform; guard the step with if: when that is expected."
   exit 1
 fi
 platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')
-decision=$(docker image inspect "$image" | jq -L "$here" -c --arg i "$image" --arg p "$platform" 'include "health"; check($i; $p)')
+decision=$(docker image inspect "$image" | jq -L "$here" -c --arg i "$image" --arg p "$platform" 'include "check-health"; check($i; $p)')
 if warning=$(jq -er .warning <<<"$decision"); then
   echo "::warning::$warning"
   exit 0

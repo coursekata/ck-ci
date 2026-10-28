@@ -34,7 +34,7 @@ runs:
   steps:
     - name: Install crane
       shell: bash
-      run: '"$GITHUB_ACTION_PATH/../install-crane.sh"'
+      run: '"$GITHUB_ACTION_PATH/../lib/install-crane.sh"'
 
     - name: Push the image and its cache
       shell: bash
@@ -45,4 +45,4 @@ runs:
         CACHE_LAYOUT: ${{ inputs.cache-layout }}
         CACHE_DIGEST: ${{ inputs.cache-digest }}
         CACHE_TAG: cache-${{ github.run_id }}-${{ github.run_attempt }}
-      run: '"$GITHUB_ACTION_PATH/../push.sh"'
+      run: '"$GITHUB_ACTION_PATH/push-image.sh"'

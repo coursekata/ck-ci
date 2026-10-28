@@ -48,21 +48,21 @@ if [ "$(jq .head <<<"$facts")" = true ]; then
   requested='[]'
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    d=$("$here/read-registry.sh" digest "$RELEASE:$name")
+    d=$("$here/../lib/read-registry.sh" digest "$RELEASE:$name")
     requested=$(jq --arg n "$name" --arg d "$d" '. + [{name: $n, digest: ($d | select(. != "") // null)}]' <<<"$requested")
   done <<<"$TAGS"
-  listed=$("$here/read-registry.sh" ls "$RELEASE")
+  listed=$("$here/../lib/read-registry.sh" ls "$RELEASE")
   latest_run=$(rel '[inputs | select(. != "")] | latest_run // empty' -Rnr <<<"$listed")
   latest=null unchanged=null
   if [ -n "$latest_run" ]; then
-    d=$("$here/read-registry.sh" digest "$RELEASE:$latest_run")
+    d=$("$here/../lib/read-registry.sh" digest "$RELEASE:$latest_run")
     latest=$(jq -n --arg t "$latest_run" --arg d "$d" '{tag: $t, digest: $d, commit: null}')
     # The build is compared only when its commit has no release yet: once sha-<commit> names one,
     # that release stands whatever the build is. A build with the latest release's own digest needs
     # no comparison either, since release.jq calls it unchanged.
     commit_release=$(jq -r --arg s "sha-$GITHUB_SHA" '.[] | select(.name == $s) | .digest // empty' <<<"$requested")
     if [ -z "$commit_release" ] && [ "$d" != "$DIGEST" ]; then
-      if ! built=$("$here/read-configs.sh" "$CANDIDATE@$DIGEST") || ! released=$("$here/read-configs.sh" "$RELEASE@$d"); then
+      if ! built=$("$here/../lib/read-configs.sh" "$CANDIDATE@$DIGEST") || ! released=$("$here/../lib/read-configs.sh" "$RELEASE@$d"); then
         echo "::error::Could not read the configs of $CANDIDATE@$DIGEST and $RELEASE@$d to compare them, so nothing was released."
         exit 1
       fi
@@ -72,7 +72,7 @@ if [ "$(jq .head <<<"$facts")" = true ]; then
       latest=$(jq --argjson c "$compared" '.commit = $c.revision' <<<"$latest")
     fi
   fi
-  latest_tag=$("$here/read-registry.sh" digest "$RELEASE:latest")
+  latest_tag=$("$here/../lib/read-registry.sh" digest "$RELEASE:latest")
   facts=$(jq --argjson tags "$requested" --argjson latest "$latest" --arg lt "$latest_tag" \
     --argjson unchanged "$unchanged" --arg cache "$CACHE" --arg cache_digest "$CACHE_DIGEST" \
     --argjson always "$([ "$ALWAYS_UPDATE_CACHE" = true ] && echo true || echo false)" \

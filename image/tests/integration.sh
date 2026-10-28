@@ -3,7 +3,7 @@
 # compose, crane, and an OCI registry on localhost:5000. The current buildx builder
 # must be a docker-container builder, which CI sets up the way build-action does, and
 # crane must be on PATH. A missing tag or repository reads as empty, and an unreachable
-# registry or one that refuses the read is an error. The preflight reads a real bake
+# registry or one that refuses the read is an error. The target check reads a real bake
 # definition, the tests run on a built OCI layout, a failing test fails and a test stage
 # that never uses the layout is refused, the layout pushes byte for byte, the build pins
 # the current cache, fixture images pass, fail and skip their health checks, and the
@@ -68,9 +68,9 @@ grep -qE '^Driver: +docker-container$' <<<"$info" ||
   die "the current buildx builder must use the docker-container driver"
 
 step "A missing repository reads as empty; an unreachable registry is an error"
-check [ -z "$("$P/read-registry.sh" digest "$REG/nothing-$RANDOM$RANDOM:t")" ]
-check [ -z "$("$P/read-registry.sh" ls "$REG/nothing-$RANDOM$RANDOM")" ]
-if "$P/read-registry.sh" digest localhost:1/release/app:nothing >/dev/null 2>"$WORK/unreachable.log"; then
+check [ -z "$("$P/lib/read-registry.sh" digest "$REG/nothing-$RANDOM$RANDOM:t")" ]
+check [ -z "$("$P/lib/read-registry.sh" ls "$REG/nothing-$RANDOM$RANDOM")" ]
+if "$P/lib/read-registry.sh" digest localhost:1/release/app:nothing >/dev/null 2>"$WORK/unreachable.log"; then
   die "an unreachable registry read as a missing reference"
 fi
 check grep -qx "::error::Could not read localhost:1/release/app:nothing." "$WORK/unreachable.log"
@@ -84,11 +84,11 @@ refusing=$(docker run -d --rm -p 127.0.0.1::5000 -v "$TESTS/fixture/htpasswd:/au
 host=$(docker port "$refusing" 5000/tcp | head -1 | sed 's/^127\.0\.0\.1/localhost/')
 for _ in $(seq 20); do curl -s -o /dev/null "http://$host/v2/" && break; sleep 0.5; done
 denied=$host/release/app
-if "$P/read-registry.sh" digest "$denied:t" >/dev/null 2>"$WORK/denied.log"; then
+if "$P/lib/read-registry.sh" digest "$denied:t" >/dev/null 2>"$WORK/denied.log"; then
   die "a refused tag read as a missing reference"
 fi
 check grep -q UNAUTHORIZED "$WORK/denied.log"
-if "$P/read-registry.sh" ls "$denied" >/dev/null 2>"$WORK/denied.log"; then
+if "$P/lib/read-registry.sh" ls "$denied" >/dev/null 2>"$WORK/denied.log"; then
   die "a refused listing read as a missing repository"
 fi
 check grep -q UNAUTHORIZED "$WORK/denied.log"
@@ -98,8 +98,8 @@ cd "$TESTS/fixture"
 export GITHUB_OUTPUT="$WORK/output"
 : >"$GITHUB_OUTPUT"
 
-step "The preflight reads the image's stage and platforms from a real bake definition"
-IMAGE_BUILD_BAKE_FILE=docker-bake.hcl IMAGE_BUILD_TARGET=app IMAGE_BUILD_TEST=app-test "$P/preflight.sh"
+step "The target check reads the image's stage and platforms from a real bake definition"
+IMAGE_BUILD_BAKE_FILE=docker-bake.hcl IMAGE_BUILD_TARGET=app IMAGE_BUILD_TEST=app-test "$P/build-action/check-targets.sh"
 check grep -qx "stage=runtime" "$GITHUB_OUTPUT"
 check grep -qx "platforms=\[\]" "$GITHUB_OUTPUT"
 
@@ -109,12 +109,12 @@ docker buildx bake --allow "fs.write=$WORK" --set "app.output=type=oci,dest=$WOR
   --metadata-file "$WORK/app.json" --progress=plain app >/dev/null 2>&1
 digest=$(jq -r '.app["containerimage.digest"]' "$WORK/app.json")
 export IMAGE_BUILD_BAKE_FILE=docker-bake.hcl IMAGE_BUILD_STAGE=runtime IMAGE_BUILD_LAYOUT="$WORK/layout" IMAGE_BUILD_DIGEST="$digest"
-IMAGE_BUILD_TEST=app-test "$P/run-tests.sh" >/dev/null
-if IMAGE_BUILD_TEST=app-failing-test "$P/run-tests.sh" >"$WORK/failing.log" 2>&1; then
+IMAGE_BUILD_TEST=app-test "$P/build-action/test-image.sh" >/dev/null
+if IMAGE_BUILD_TEST=app-failing-test "$P/build-action/test-image.sh" >"$WORK/failing.log" 2>&1; then
   die "a failing test passed"
 fi
 check grep -q "ERROR: .*grep -qx v2 /app/version" "$WORK/failing.log"
-if IMAGE_BUILD_TEST=app-unrelated-test "$P/run-tests.sh" >"$WORK/unrelated.log" 2>&1; then
+if IMAGE_BUILD_TEST=app-unrelated-test "$P/build-action/test-image.sh" >"$WORK/unrelated.log" 2>&1; then
   die "a test stage that never used the image passed as a test of it"
 fi
 check grep -q "::error::app-unrelated-test never built on the image" "$WORK/unrelated.log"
@@ -122,37 +122,37 @@ check grep -q "::error::app-unrelated-test never built on the image" "$WORK/unre
 step "The tested layout and its cache push byte for byte, untagged, and a digest the layout lacks pushes nothing"
 cache_digest=$(jq -r '.manifests[0].digest' "$WORK/cache/index.json")
 candidate=$REG/candidate/app-$RANDOM$RANDOM
-CANDIDATE=$candidate LAYOUT="$WORK/layout" DIGEST="$digest" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-1-1 "$P/push.sh" >/dev/null 2>&1
+CANDIDATE=$candidate LAYOUT="$WORK/layout" DIGEST="$digest" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-1-1 "$P/push-action/push-image.sh" >/dev/null 2>&1
 check [ "$(crane manifest "$candidate@$digest" | sha256sum | cut -d' ' -f1)" = "${digest#sha256:}" ]
-check [ "$("$P/read-registry.sh" digest "$candidate:cache-1-1")" = "$cache_digest" ]
+check [ "$("$P/lib/read-registry.sh" digest "$candidate:cache-1-1")" = "$cache_digest" ]
 check [ "$(crane ls "$candidate")" = cache-1-1 ]
-check [ -z "$("$P/read-registry.sh" digest "$candidate:nothing")" ]
+check [ -z "$("$P/lib/read-registry.sh" digest "$candidate:nothing")" ]
 missing=sha256:$(printf '0%.0s' {1..64})
 other=$REG/candidate/other-$RANDOM$RANDOM
-if CANDIDATE=$other LAYOUT="$WORK/layout" DIGEST="$missing" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-2-1 "$P/push.sh" >"$WORK/push.log" 2>&1; then
+if CANDIDATE=$other LAYOUT="$WORK/layout" DIGEST="$missing" CACHE_LAYOUT="$WORK/cache" CACHE_DIGEST="$cache_digest" CACHE_TAG=cache-2-1 "$P/push-action/push-image.sh" >"$WORK/push.log" 2>&1; then
   die "a digest the layout does not hold was pushed"
 fi
 check grep -q "::error::$WORK/layout does not hold $missing alone" "$WORK/push.log"
-check [ -z "$("$P/read-registry.sh" ls "$other")" ]
+check [ -z "$("$P/lib/read-registry.sh" ls "$other")" ]
 
 step "The build pins the current cache by digest; with none it starts cold, and an unreachable registry fails"
 pinned=$REG/cache/pin-$RANDOM$RANDOM
-CACHE=$pinned GITHUB_OUTPUT="$WORK/cold" "$P/pin-cache.sh" >"$WORK/cold.log"
+CACHE=$pinned GITHUB_OUTPUT="$WORK/cold" "$P/build-action/pin-cache.sh" >"$WORK/cold.log"
 check grep -qx "::notice::No cache at $pinned:current yet, so this build starts cold." "$WORK/cold.log"
 check [ ! -s "$WORK/cold" ]
 crane copy "$candidate:cache-1-1" "$pinned:current" >/dev/null 2>&1
-CACHE=$pinned GITHUB_OUTPUT="$WORK/warm" "$P/pin-cache.sh"
+CACHE=$pinned GITHUB_OUTPUT="$WORK/warm" "$P/build-action/pin-cache.sh"
 check grep -qx "from=type=registry,ref=$pinned@$cache_digest" "$WORK/warm"
-if CACHE=localhost:1/cache/app GITHUB_OUTPUT="$WORK/unreachable" "$P/pin-cache.sh" >/dev/null 2>&1; then
+if CACHE=localhost:1/cache/app GITHUB_OUTPUT="$WORK/unreachable" "$P/build-action/pin-cache.sh" >/dev/null 2>&1; then
   die "an unreachable registry pinned no cache and went on"
 fi
 
 step "The image loads for checks with the build's labels, and only with the tested build's layers"
 printf '{"target":{"app":{"labels":{"org.opencontainers.image.revision":"abc"}}}}' >"$WORK/labels.json"
-IMAGE_BUILD_LABELS_FILE="$WORK/labels.json" IMAGE_BUILD_TARGET=app IMAGE_BUILD_PLATFORMS='[]' "$P/load-image.sh" >/dev/null 2>&1
+IMAGE_BUILD_LABELS_FILE="$WORK/labels.json" IMAGE_BUILD_TARGET=app IMAGE_BUILD_PLATFORMS='[]' "$P/build-action/load-image.sh" >/dev/null 2>&1
 check grep -qx "image=image-build/app:candidate" "$GITHUB_OUTPUT"
 check [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' image-build/app:candidate)" = abc ]
-if IMAGE_BUILD_LABELS_FILE="$WORK/labels.json" IMAGE_BUILD_TARGET=served IMAGE_BUILD_PLATFORMS='[]' "$P/load-image.sh" >"$WORK/load.log" 2>&1; then
+if IMAGE_BUILD_LABELS_FILE="$WORK/labels.json" IMAGE_BUILD_TARGET=served IMAGE_BUILD_PLATFORMS='[]' "$P/build-action/load-image.sh" >"$WORK/load.log" 2>&1; then
   die "an image whose layers are not the layout's loaded for checks"
 fi
 check grep -q "not the tested build's" "$WORK/load.log"
@@ -163,23 +163,23 @@ load() { docker buildx bake --set "$1.platform=$platform" --set "$1.output=type=
 step "A served image passes its health check, with no network and none of the job's environment"
 export FIXTURE_JOB_VAR=from-the-job
 load served
-"$P/health.sh" health/served >"$WORK/served.out"
+IMAGE=health/served "$P/health-action/check-health.sh" >"$WORK/served.out"
 check [ ! -s "$WORK/served.out" ]
 unset FIXTURE_JOB_VAR
 
 step "An image that turns unhealthy fails its health run"
 load sick
-if "$P/health.sh" health/sick >/dev/null 2>"$WORK/sick.log"; then
+if IMAGE=health/sick "$P/health-action/check-health.sh" >/dev/null 2>"$WORK/sick.log"; then
   die "an image whose health check never passes passed its health run"
 fi
 check grep -q "health/sick did not become healthy" "$WORK/sick.log"
 
 step "An image that declares no health check, or HEALTHCHECK NONE, warns and runs nothing"
 load app
-"$P/health.sh" health/app >"$WORK/app.out" 2>&1
+IMAGE=health/app "$P/health-action/check-health.sh" >"$WORK/app.out" 2>&1
 check grep -qx "::warning::health/app declares no HEALTHCHECK, so no health check ran for it." "$WORK/app.out"
 load app-unrelated-test
-"$P/health.sh" health/app-unrelated-test >"$WORK/plain.out" 2>&1
+IMAGE=health/app-unrelated-test "$P/health-action/check-health.sh" >"$WORK/plain.out" 2>&1
 check grep -qx "::warning::health/app-unrelated-test declares no HEALTHCHECK, so no health check ran for it." "$WORK/plain.out"
 
 # release_build <target> <revision> <tag> [<extra --set>...]: builds target with the labels
@@ -205,8 +205,8 @@ release_build() {
 same() {
   [ -n "$1" ] && [ -n "$2" ] || return 1
   local build release
-  build=$("$P/read-configs.sh" "$REG/release/cmp@$1") && release=$("$P/read-configs.sh" "$REG/release/cmp@$2") || return 1
-  jq -L "$P" -r --argjson r "$release" 'include "release"; compare($r) | "unchanged=\(.unchanged)"' <<<"$build"
+  build=$("$P/lib/read-configs.sh" "$REG/release/cmp@$1") && release=$("$P/lib/read-configs.sh" "$REG/release/cmp@$2") || return 1
+  jq -L "$P/release-action" -r --argjson r "$release" 'include "release"; compare($r) | "unchanged=\(.unchanged)"' <<<"$build"
 }
 
 step "A rebuild that changes only the labels each run sets compares unchanged; other content does not"
@@ -252,12 +252,12 @@ release() {
   : >"$GITHUB_STEP_SUMMARY"
   GITHUB_SERVER_URL="file://$WORK/git" GITHUB_REPOSITORY=acme/app GITHUB_REF=${REF:-refs/heads/main} GITHUB_SHA=$1 GITHUB_RUN_ID=$2 \
     CANDIDATE=$REG/release/cmp RELEASE=${TO:-$rel} CACHE=${CACHE:-} CACHE_DIGEST=${CACHE_DIGEST:-} ALWAYS_UPDATE_CACHE=false TOKEN="" \
-    DIGEST=$3 TAGS="sha-$1"$'\n'"run-$2"$'\n'"v-$1" "$P/release.sh" >"$WORK/release.log" 2>&1 || {
+    DIGEST=$3 TAGS="sha-$1"$'\n'"run-$2"$'\n'"v-$1" "$P/release-action/release.sh" >"$WORK/release.log" 2>&1 || {
     cat "$WORK/release.log"
     return 1
   }
 }
-names() { "$P/read-registry.sh" digest "$rel:$1"; }
+names() { "$P/lib/read-registry.sh" digest "$rel:$1"; }
 
 step "The first release is tagged, made the latest, given latest, and its cache made current"
 crane copy "$candidate@$cache_digest" "$REG/release/cmp:cache" >/dev/null 2>&1
@@ -267,7 +267,7 @@ CACHE=$cache CACHE_DIGEST=$cache_digest release "$one" 1 "$a" || die "the first 
 check grep -qx "released=true" "$GITHUB_OUTPUT"
 check [ "$(names "sha-$one")" = "$a" ] && check [ "$(names "v-$one")" = "$a" ] && check [ "$(names run-1)" = "$a" ]
 check [ "$(names latest)" = "$a" ]
-check [ "$("$P/read-registry.sh" digest "$cache:current")" = "$cache_digest" ]
+check [ "$("$P/lib/read-registry.sh" digest "$cache:current")" = "$cache_digest" ]
 
 step "A build unchanged from the latest release releases nothing"
 two=$(merge)

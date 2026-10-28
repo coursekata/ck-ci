@@ -58,18 +58,18 @@ runs:
         cache-binary: false
 
     - name: Check the image and test targets
-      id: preflight
+      id: targets
       shell: bash
       env:
         IMAGE_BUILD_BAKE_FILE: ${{ inputs.bake-file }}
         IMAGE_BUILD_TARGET: ${{ inputs.target }}
         IMAGE_BUILD_TEST: ${{ inputs.test-target }}
-      run: '"$GITHUB_ACTION_PATH/../preflight.sh"'
+      run: '"$GITHUB_ACTION_PATH/check-targets.sh"'
 
     - name: Install crane
       if: inputs.no-cache != 'true' && inputs.cache-repository != ''
       shell: bash
-      run: '"$GITHUB_ACTION_PATH/../install-crane.sh"'
+      run: '"$GITHUB_ACTION_PATH/../lib/install-crane.sh"'
 
     - name: Pin the cache
       id: cache
@@ -77,7 +77,7 @@ runs:
       shell: bash
       env:
         CACHE: ${{ inputs.cache-repository }}
-      run: '"$GITHUB_ACTION_PATH/../pin-cache.sh"'
+      run: '"$GITHUB_ACTION_PATH/pin-cache.sh"'
 
     # One set of tag settings makes the OCI labels and the tag names, so the version label matches
     # the tags. The labels go into the build and the loaded image alike; the tag names only to the output.
@@ -133,10 +133,10 @@ runs:
       env:
         IMAGE_BUILD_BAKE_FILE: ${{ inputs.bake-file }}
         IMAGE_BUILD_TEST: ${{ inputs.test-target }}
-        IMAGE_BUILD_STAGE: ${{ steps.preflight.outputs.stage }}
+        IMAGE_BUILD_STAGE: ${{ steps.targets.outputs.stage }}
         IMAGE_BUILD_LAYOUT: ${{ runner.temp }}/image-build/${{ inputs.target }}/image
         IMAGE_BUILD_DIGEST: ${{ steps.digests.outputs.image }}
-      run: '"$GITHUB_ACTION_PATH/../run-tests.sh"'
+      run: '"$GITHUB_ACTION_PATH/test-image.sh"'
 
     - name: Load the image for this runner's checks
       id: load
@@ -145,6 +145,6 @@ runs:
         IMAGE_BUILD_BAKE_FILE: ${{ inputs.bake-file }}
         IMAGE_BUILD_LABELS_FILE: ${{ steps.meta.outputs.bake-file-labels }}
         IMAGE_BUILD_TARGET: ${{ inputs.target }}
-        IMAGE_BUILD_PLATFORMS: ${{ steps.preflight.outputs.platforms }}
+        IMAGE_BUILD_PLATFORMS: ${{ steps.targets.outputs.platforms }}
         IMAGE_BUILD_LAYOUT: ${{ runner.temp }}/image-build/${{ inputs.target }}/image
-      run: '"$GITHUB_ACTION_PATH/../load-image.sh"'
+      run: '"$GITHUB_ACTION_PATH/load-image.sh"'

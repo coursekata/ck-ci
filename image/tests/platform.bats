@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016 # the filters are jq, and $p is jq's
 load helper
 
-platform() { jq -c -L "$SCRIPTS" --arg p "$1" "include \"platform\"; $2"; }
+platform() { jq -c -L "$SCRIPTS/build-action" --arg p "$1" "include \"platform\"; $2"; }
 
 # index <platform json>...: an OCI index with one manifest per platform, whose digest is its
 # platform's os/architecture[/variant].
