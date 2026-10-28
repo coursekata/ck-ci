@@ -163,23 +163,23 @@ load() { docker buildx bake --set "$1.platform=$platform" --set "$1.output=type=
 step "A served image passes its health check, with no network and none of the job's environment"
 export FIXTURE_JOB_VAR=from-the-job
 load served
-IMAGE=health/served "$P/health-action/check-health.sh" >"$WORK/served.out"
+IMAGE=health/served "$P/check-health-action/check-health.sh" >"$WORK/served.out"
 check [ ! -s "$WORK/served.out" ]
 unset FIXTURE_JOB_VAR
 
 step "An image that turns unhealthy fails its health run"
 load sick
-if IMAGE=health/sick "$P/health-action/check-health.sh" >/dev/null 2>"$WORK/sick.log"; then
+if IMAGE=health/sick "$P/check-health-action/check-health.sh" >/dev/null 2>"$WORK/sick.log"; then
   die "an image whose health check never passes passed its health run"
 fi
 check grep -q "health/sick did not become healthy" "$WORK/sick.log"
 
 step "An image that declares no health check, or HEALTHCHECK NONE, warns and runs nothing"
 load app
-IMAGE=health/app "$P/health-action/check-health.sh" >"$WORK/app.out" 2>&1
+IMAGE=health/app "$P/check-health-action/check-health.sh" >"$WORK/app.out" 2>&1
 check grep -qx "::warning::health/app declares no HEALTHCHECK, so no health check ran for it." "$WORK/app.out"
 load app-unrelated-test
-IMAGE=health/app-unrelated-test "$P/health-action/check-health.sh" >"$WORK/plain.out" 2>&1
+IMAGE=health/app-unrelated-test "$P/check-health-action/check-health.sh" >"$WORK/plain.out" 2>&1
 check grep -qx "::warning::health/app-unrelated-test declares no HEALTHCHECK, so no health check ran for it." "$WORK/plain.out"
 
 # release_build <target> <revision> <tag> [<extra --set>...]: builds target with the labels

@@ -105,7 +105,7 @@ jobs:
           target: app
           test-target: app-test
 
-      - uses: ./image/health-action
+      - uses: ./image/check-health-action
         with:
           image: ${{ steps.build.outputs.image }}
 

@@ -1,4 +1,4 @@
-name: image-push
+name: push-action
 description: Pushes a tested image and its build cache, from build-action's OCI layouts, by digest to a candidate repository.
 
 # One image per call, after the caller's checks, with credentials that can write the candidate
