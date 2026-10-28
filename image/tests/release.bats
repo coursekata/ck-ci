@@ -18,7 +18,7 @@ facts() {
     cache: {repository: "r.example/cache", digest: $K}, always_update_cache: false}' |
     jq --arg A "$A" --arg B "$B" --arg C "$C" "${1:-.}"
 }
-release() { jq -L "$SCRIPTS" "$@"; }
+release() { jq -L "$SCRIPTS/release-action" "$@"; }
 
 # plan_of [<jq update>]: the plan for those facts, compact.
 plan_of() { facts "$@" | release -c 'include "release"; plan'; }

@@ -1,7 +1,7 @@
 include "platform";
 
-# What preflight.sh makes of a bake definition, as `bake --print` prints it for the image and test
-# targets: {stage, platforms} for the steps after it, or {error}, which fails the build before
+# What check-targets.sh makes of a bake definition, as `bake --print` prints it for the image and
+# test targets: {stage, platforms} for the steps after it, or {error}, which fails the build before
 # anything builds.
 def check($image; $test):
   def stage($n): .target[$n].target // "";

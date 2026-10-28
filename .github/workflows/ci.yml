@@ -85,7 +85,7 @@ jobs:
           cache-binary: false
 
       - name: Install crane, as the actions do
-        run: image/install-crane.sh
+        run: image/lib/install-crane.sh
 
       - name: Run the image actions' scripts against real tools
         run: image/tests/integration.sh
@@ -163,7 +163,7 @@ jobs:
           head=$(git ls-remote "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_REF" | awk -v r="$GITHUB_REF" '$2 == r { print $1 }')
           [ -n "$head" ] || { echo "::error::Could not read $GITHUB_REF's head."; exit 1; }
           lines() { jq -Rsc 'split("\n") | map(select(. != "")) | sort'; }
-          tags() { image/read-registry.sh ls "$1" | lines; }
+          tags() { image/lib/read-registry.sh ls "$1" | lines; }
           # expect <step> <digest> <flag> <tags now> <tags released> <tags before>
           expect() {
             if [ -n "$BUILT" ] && [ "$2" = "$BUILT" ] && [ "$3" = true ] && [ "$4" = "$5" ]; then return; fi
@@ -189,7 +189,7 @@ jobs:
           persist-credentials: false
 
       - name: Install crane, as the actions do
-        run: image/install-crane.sh
+        run: image/lib/install-crane.sh
 
       - run: crane version
 

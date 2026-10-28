@@ -46,7 +46,7 @@ runs:
   steps:
     - name: Install crane
       shell: bash
-      run: '"$GITHUB_ACTION_PATH/../install-crane.sh"'
+      run: '"$GITHUB_ACTION_PATH/../lib/install-crane.sh"'
 
     - name: Release the head
       id: release
@@ -60,4 +60,4 @@ runs:
         CACHE_DIGEST: ${{ inputs.cache-digest }}
         ALWAYS_UPDATE_CACHE: ${{ inputs.always-update-cache }}
         TOKEN: ${{ github.token }}
-      run: '"$GITHUB_ACTION_PATH/../release.sh"'
+      run: '"$GITHUB_ACTION_PATH/release.sh"'

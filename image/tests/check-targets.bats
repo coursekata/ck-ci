@@ -1,12 +1,12 @@
-# preflight.jq's decisions, on bake definitions written as `bake --print` prints them.
+# check-targets.jq's decisions, on bake definitions written as `bake --print` prints them.
 # shellcheck disable=SC2016 # the backticks are the messages' own, and $i and $t are jq's
 load helper
 
-# check <image target json> <test target json>: the preflight's answer for the targets app and
+# check <image target json> <test target json>: the target check's answer for the targets app and
 # app-test, compact.
 check() {
-  jq -n -c -L "$SCRIPTS" --argjson i "$1" --argjson t "$2" \
-    'include "preflight"; {target: {app: $i, "app-test": $t}} | check("app"; "app-test")'
+  jq -n -c -L "$SCRIPTS/build-action" --argjson i "$1" --argjson t "$2" \
+    'include "check-targets"; {target: {app: $i, "app-test": $t}} | check("app"; "app-test")'
 }
 
 @test "outputs the image's stage and its platforms, sorted" {

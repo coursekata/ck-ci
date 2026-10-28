@@ -16,4 +16,4 @@ runs:
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}
-      run: '"$GITHUB_ACTION_PATH/../health.sh" "$IMAGE"'
+      run: '"$GITHUB_ACTION_PATH/check-health.sh"'
