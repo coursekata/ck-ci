@@ -10,6 +10,11 @@ target "app-test" {
   target   = "test"
 }
 
+target "app-failing-test" {
+  inherits = ["app"]
+  target   = "failing"
+}
+
 target "app-unrelated-test" {
   inherits = ["app"]
   target   = "unrelated"

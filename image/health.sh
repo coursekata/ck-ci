@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Runs an image's own HEALTHCHECK under compose, as the only service, with no mounts and no network,
-# and fails if it does not become healthy. The image must already be in Docker. An image built for
-# another platform, or that declares no health check, warns and runs nothing: Docker would run the
-# wrong platform's image, and compose calls a service with no health check healthy the moment it
-# starts.
+# and fails if it does not become healthy. The image must already be in Docker. health.jq decides
+# from the image's inspect whether it runs; one that does not warns and runs nothing.
 # usage: health.sh <image>
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -14,16 +12,9 @@ if [ -z "$image" ]; then
   exit 1
 fi
 platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')
-
-built=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")
-if [ "$built" != "$platform" ]; then
-  echo "::warning::$image is built for $built, not this runner's $platform, so no health check ran for it."
-  exit 0
-fi
-
-check=$(docker image inspect --format '{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{end}}' "$image")
-if [ -z "$check" ] || [ "$check" = '["NONE"]' ]; then
-  echo "::warning::$image declares no HEALTHCHECK, so no health check ran for it."
+decision=$(docker image inspect "$image" | jq -L "$here" -c --arg i "$image" --arg p "$platform" 'include "health"; check($i; $p)')
+if warning=$(jq -er .warning <<<"$decision"); then
+  echo "::warning::$warning"
   exit 0
 fi
 
