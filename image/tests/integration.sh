@@ -11,7 +11,6 @@ TESTS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 P=$(cd "$TESTS/.." && pwd)
 
 REG=${REG:-localhost:5000}
-WORK=$(mktemp -d)
 
 step() { printf '\n=== %s\n' "$*"; }
 die() {
@@ -19,6 +18,40 @@ die() {
   exit 1
 }
 check() { "$@" || die "check failed: $*"; }
+# Deletes the work directory only when it is the one this run made: its name, a real directory and
+# the same real path it was made at, so no folder above it has been swapped for a symlink. With the
+# marker written at creation it removes the tree; without, the run stopped before writing it, and
+# rmdir removes the directory only while it is empty. No -f: input from /dev/null keeps rm from
+# asking about the read-only git objects and blobs at a terminal, and anything else in its way
+# stops it.
+remove_work() {
+  local real
+  real=$(CDPATH='' cd -P -- "$WORK" 2>/dev/null && pwd -P) || real=""
+  if ! [[ $WORK == */ck-ci-integration.???????? ]] || ! [ -d "$WORK" ] || [ -L "$WORK" ] || [ "$real" != "$WORK" ]; then
+    echo "::warning::Left $WORK in place: it is not the work directory this run made." >&2
+  elif [ -f "$WORK/.ck-ci-integration" ]; then
+    # shellcheck disable=SC2217 # rm reads its answers from stdin at a terminal
+    rm -r -- "$WORK" </dev/null || echo "::warning::Could not remove $WORK." >&2
+  else
+    rmdir -- "$WORK" 2>/dev/null || echo "::warning::Left $WORK in place: it has no marker and is not empty." >&2
+  fi
+}
+# Removes the images the test loads into Docker and the work directory, so a run leaves none.
+cleanup() {
+  docker image rm -f image-build/app:candidate image-build/served:candidate health/served health/sick \
+    health/app >/dev/null 2>&1 || true
+  remove_work
+}
+
+# The work directory, made under TMPDIR's absolute, physical path, so the script's cd cannot move it
+# and the cleanup can tell when a folder above it has changed. The trap is armed before anything
+# else can fail.
+tmp=${TMPDIR:-/tmp}
+tmp=$(CDPATH='' cd -P -- "$tmp" && pwd -P)
+WORK=$(mktemp -d "$tmp/ck-ci-integration.XXXXXXXX")
+readonly WORK
+trap cleanup EXIT
+: >"$WORK/.ck-ci-integration"
 
 step "Check the builder"
 # Read whole, not piped: grep -q stops at its match, buildx then fails writing the rest, and
