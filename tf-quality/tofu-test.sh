@@ -4,6 +4,9 @@
 # module that calls it, however deep, and no other. Given every file, it runs every suite.
 set -uo pipefail
 
+# git exports GIT_DIR to a hook, and the git that fetches a module source inherits it.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 # The folders the given files sit in, as absolute paths.
 changed=""
 for f in "$@"; do
