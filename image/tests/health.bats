@@ -1,64 +1,37 @@
+# health.jq's decisions, on `docker image inspect` output, and health.sh's refusal of no image.
+# shellcheck disable=SC2016 # the filters are jq, and $i and $p are jq's
 load helper
 
-IMG=r.example/c@sha256:$(printf '%064x' 1)
+# inspect [<healthcheck test json>] [<os/architecture>]: inspect's JSON for an image built for that
+# platform (linux/arm64 by default), declaring that health check, or none.
+inspect() {
+  jq -n -c --arg p "${2:-linux/arm64}" --argjson t "${1:-null}" \
+    '[{Os: ($p | split("/")[0]), Architecture: ($p | split("/")[1]), Config: (if $t then {Healthcheck: {Test: $t}} else {} end)}]'
+}
+check() { jq -c -L "$SCRIPTS" --arg i r.example/c --arg p linux/arm64 'include "health"; check($i; $p)'; }
 
-setup() {
-  fresh_state
-  COMPOSE="$SCRIPTS/health.compose.yml"
-  echo linux/arm64 >"$FAKE_STATE/platform"
-  echo '["CMD-SHELL","wget -q -O /dev/null http://127.0.0.1:8080/"]' >"$FAKE_STATE/healthcheck"
+@test "an image with a health check, built for the runner's platform, runs" {
+  run check <<<"$(inspect '["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]')"
+  assert_output '{}'
 }
 
-@test "a healthy image passes, running the image it was given, and its container is removed" {
-  run --separate-stderr "$SCRIPTS/health.sh" "$IMG"
-  assert_success
-  assert_output ""
-  run calls
-  assert_line "docker compose -p image-health -f $COMPOSE up --wait --wait-timeout 600 candidate"
-  assert_line "compose-env image=[$IMG]"
-  assert_line "docker compose -p image-health -f $COMPOSE down --volumes"
-}
-
-@test "an image that declares no health check warns and runs nothing" {
-  rm "$FAKE_STATE/healthcheck"
-  run "$SCRIPTS/health.sh" "$IMG"
-  assert_success
-  assert_output --partial "::warning::$IMG declares no HEALTHCHECK, so no health check ran for it."
-  run calls
-  refute_line --partial "docker compose"
+@test "an image that declares no health check warns and does not run" {
+  run check <<<"$(inspect)"
+  assert_output '{"warning":"r.example/c declares no HEALTHCHECK, so no health check ran for it."}'
 }
 
 @test "HEALTHCHECK NONE warns like no health check" {
-  echo '["NONE"]' >"$FAKE_STATE/healthcheck"
-  run "$SCRIPTS/health.sh" "$IMG"
-  assert_success
-  assert_output --partial "::warning::$IMG declares no HEALTHCHECK"
-  run calls
-  refute_line --partial "docker compose"
+  run check <<<"$(inspect '["NONE"]')"
+  assert_output --partial 'declares no HEALTHCHECK'
 }
 
-@test "an image built for another platform warns and runs nothing" {
-  echo linux/amd64 >"$FAKE_STATE/image-platform"
-  run "$SCRIPTS/health.sh" "$IMG"
-  assert_success
-  assert_output --partial "::warning::$IMG is built for linux/amd64, not this runner's linux/arm64, so no health check ran for it."
-  run calls
-  refute_line --partial "docker compose"
-}
-
-@test "an unhealthy image fails with its logs and is removed" {
-  echo 1 >"$FAKE_STATE/compose-status"
-  run "$SCRIPTS/health.sh" "$IMG"
-  assert_failure
-  assert_output --partial "the service's last words"
-  assert_output --partial "::error::$IMG did not become healthy"
-  run calls
-  assert_line "docker compose -p image-health -f $COMPOSE down --volumes"
+@test "an image built for another platform warns and does not run" {
+  run check <<<"$(inspect '["CMD", "true"]' linux/amd64)"
+  assert_output '{"warning":"r.example/c is built for linux/amd64, not this runner'"'"'s linux/arm64, so no health check ran for it."}'
 }
 
 @test "no image fails, naming the guard to use" {
   run "$SCRIPTS/health.sh" ""
   assert_failure
   assert_output "::error::No image was given to check. build-action loads none when the image does not ship this runner's platform; guard the step with if: when that is expected."
-  assert_equal "$(calls)" ""
 }

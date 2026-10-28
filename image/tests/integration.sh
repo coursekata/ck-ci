@@ -4,12 +4,12 @@
 # must be a docker-container builder, which CI sets up the way build-action does, and
 # crane must be on PATH. A missing tag or repository reads as empty, and an unreachable
 # registry or one that refuses the read is an error. The preflight reads a real bake
-# definition, the tests run on a built OCI layout and a test stage that never uses it is
-# refused, the layout pushes byte for byte, the build pins the current cache, fixture
-# images pass, fail and skip their health checks, and the release runs whole against a
-# real git repository: it releases the head, releases nothing for an unchanged build or a
-# commit no longer the head, finishes a release cut short, finishes an earlier release of
-# the commit from its own image, and refuses a tag.
+# definition, the tests run on a built OCI layout, a failing test fails and a test stage
+# that never uses the layout is refused, the layout pushes byte for byte, the build pins
+# the current cache, fixture images pass, fail and skip their health checks, and the
+# release runs whole against a real git repository: it releases the head, releases
+# nothing for an unchanged build or a commit no longer the head, finishes a release cut
+# short, finishes an earlier release of the commit from its own image, and refuses a tag.
 set -euo pipefail
 TESTS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 P=$(cd "$TESTS/.." && pwd)
@@ -45,8 +45,8 @@ remove_work() {
 # run leaves none.
 cleanup() {
   [ -z "$refusing" ] || docker rm -f "$refusing" >/dev/null 2>&1 || true
-  docker image rm -f image-build/app:candidate image-build/served:candidate health/served health/sick \
-    health/app >/dev/null 2>&1 || true
+  docker image rm -f image-build/app:candidate image-build/served:candidate health/served health/sick health/app \
+    health/app-unrelated-test >/dev/null 2>&1 || true
   remove_work
 }
 
@@ -103,13 +103,17 @@ IMAGE_BUILD_BAKE_FILE=docker-bake.hcl IMAGE_BUILD_TARGET=app IMAGE_BUILD_TEST=ap
 check grep -qx "stage=runtime" "$GITHUB_OUTPUT"
 check grep -qx "platforms=\[\]" "$GITHUB_OUTPUT"
 
-step "The tests run on the built image, and a test stage that never uses it is refused"
+step "The tests run on the built image, a failing test fails, and a test stage that never uses it is refused"
 docker buildx bake --allow "fs.write=$WORK" --set "app.output=type=oci,dest=$WORK/layout,tar=false,oci-mediatypes=true,compression=gzip" \
   --set "app.cache-to=type=local,dest=$WORK/cache,mode=max,oci-mediatypes=true,image-manifest=true" \
   --metadata-file "$WORK/app.json" --progress=plain app >/dev/null 2>&1
 digest=$(jq -r '.app["containerimage.digest"]' "$WORK/app.json")
 export IMAGE_BUILD_BAKE_FILE=docker-bake.hcl IMAGE_BUILD_STAGE=runtime IMAGE_BUILD_LAYOUT="$WORK/layout" IMAGE_BUILD_DIGEST="$digest"
 IMAGE_BUILD_TEST=app-test "$P/run-tests.sh" >/dev/null
+if IMAGE_BUILD_TEST=app-failing-test "$P/run-tests.sh" >"$WORK/failing.log" 2>&1; then
+  die "a failing test passed"
+fi
+check grep -q "ERROR: .*grep -qx v2 /app/version" "$WORK/failing.log"
 if IMAGE_BUILD_TEST=app-unrelated-test "$P/run-tests.sh" >"$WORK/unrelated.log" 2>&1; then
   die "a test stage that never used the image passed as a test of it"
 fi
@@ -170,10 +174,13 @@ if "$P/health.sh" health/sick >/dev/null 2>"$WORK/sick.log"; then
 fi
 check grep -q "health/sick did not become healthy" "$WORK/sick.log"
 
-step "An image that declares no health check warns, and runs nothing"
+step "An image that declares no health check, or HEALTHCHECK NONE, warns and runs nothing"
 load app
-"$P/health.sh" health/app >"$WORK/app.out"
-check grep -q "^::warning::health/app declares no HEALTHCHECK" "$WORK/app.out"
+"$P/health.sh" health/app >"$WORK/app.out" 2>&1
+check grep -qx "::warning::health/app declares no HEALTHCHECK, so no health check ran for it." "$WORK/app.out"
+load app-unrelated-test
+"$P/health.sh" health/app-unrelated-test >"$WORK/plain.out" 2>&1
+check grep -qx "::warning::health/app-unrelated-test declares no HEALTHCHECK, so no health check ran for it." "$WORK/plain.out"
 
 # release_build <target> <revision> <tag> [<extra --set>...]: builds target with the labels
 # build-action sets to a layout, pushes it as push-action does, as $REG/release/cmp:<tag>, and prints
