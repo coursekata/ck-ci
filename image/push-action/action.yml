@@ -32,13 +32,9 @@ outputs:
 runs:
   using: composite
   steps:
-    # Only copies, so the docker driver: the pinned buildx, and no BuildKit.
-    - name: Set up buildx
-      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      with:
-        version: v0.38.0
-        driver: docker
-        cache-binary: false
+    - name: Install crane
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/../install-crane.sh"'
 
     - name: Push the image and its cache
       shell: bash

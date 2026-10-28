@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Installs crane, which does release-action's registry reads and writes, from go-containerregistry's
-# release, pinned by version and checked against the checksum recorded here. A new version changes
-# all three lines by hand: neither Renovate nor Dependabot moves a checksum.
+# Installs crane, which does every registry read and write outside a build, from
+# go-containerregistry's release, pinned by version and checked against the checksum recorded here.
+# A new version changes all three lines by hand: neither Renovate nor Dependabot moves a checksum.
 set -euo pipefail
 version=v0.22.1
 case $(uname -m) in

@@ -60,8 +60,9 @@ jobs:
           extra-args: --all-files
 
   image:
-    # The image actions' scripts against a real BuildKit, Docker and registry, with buildx
-    # and the builder set up the way build-action sets them up. Their unit tests run in hooks.
+    # The image actions' scripts against a real BuildKit, Docker, crane and registry, with
+    # buildx and the builder set up the way build-action sets them up. Their unit tests run
+    # in hooks.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -83,7 +84,7 @@ jobs:
           driver-opts: image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
           cache-binary: false
 
-      - name: Install crane, as release-action does
+      - name: Install crane, as the actions do
         run: image/install-crane.sh
 
       - name: Run the image actions' scripts against real tools
@@ -131,7 +132,7 @@ jobs:
       - name: Cut a release short
         env:
           IMAGE: localhost:5000/candidate/app@${{ steps.push.outputs.digest }}
-        run: docker buildx imagetools create --prefer-index=false --tag "localhost:5000/release/cut:sha-$GITHUB_SHA" "$IMAGE"
+        run: crane copy "$IMAGE" "localhost:5000/release/cut:sha-$GITHUB_SHA"
 
       - id: finish
         uses: ./image/release-action

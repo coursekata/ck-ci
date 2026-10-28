@@ -66,6 +66,11 @@ runs:
         IMAGE_BUILD_TEST: ${{ inputs.test-target }}
       run: '"$GITHUB_ACTION_PATH/../preflight.sh"'
 
+    - name: Install crane
+      if: inputs.no-cache != 'true' && inputs.cache-repository != ''
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/../install-crane.sh"'
+
     - name: Pin the cache
       id: cache
       if: inputs.no-cache != 'true' && inputs.cache-repository != ''
