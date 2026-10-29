@@ -1,0 +1,5 @@
+# release-action's script and its tests; the tests import release from its folder.
+project-includes = ["image/release-action/release.py", "image/tests/test_release.py"]
+search-path = ["image/release-action"]
+python-version = "3.15"
+preset = "strict"

@@ -2,6 +2,9 @@
 .env
 !.env.example
 
+# Python's bytecode, from running release-action's tests
+__pycache__/
+
 # OpenTofu's working directory, from running the fixture locally
 .terraform/
 

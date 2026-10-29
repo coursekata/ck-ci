@@ -44,6 +44,16 @@ runs:
       shell: bash
       run: '"$GITHUB_ACTION_PATH/../lib/install-crane.sh"'
 
+    # The Python the repository's .python-version pins, kept to this step: the caller's job keeps
+    # its own python3, so a bump to the pin changes no other step. setup-python still adds its
+    # problem matcher to the job.
+    - name: Install Python
+      id: python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version-file: ${{ github.action_path }}/../../.python-version
+        update-environment: false
+
     - name: Release the head
       id: release
       shell: bash
@@ -56,4 +66,5 @@ runs:
         CACHE_DIGEST: ${{ inputs.cache-digest }}
         ALWAYS_UPDATE_CACHE: ${{ inputs.always-update-cache }}
         TOKEN: ${{ github.token }}
-      run: '"$GITHUB_ACTION_PATH/release.sh"'
+        PYTHON: ${{ steps.python.outputs.python-path }}
+      run: '"$PYTHON" -I "$GITHUB_ACTION_PATH/release.py"'
