@@ -102,7 +102,7 @@ A repository-scoped token cannot write under `.github/workflows`, so the preset 
 
 ## Working here
 
-Run `prek install` once. The hooks need `gitleaks`, `jq`, `tofu`, `shellcheck` and `bats` with its `bats-support` and `bats-assert` libraries. shellcheck is needed on `PATH` because actionlint checks the workflows' scripts only with it there; prek installs actionlint, the shellcheck hook and Renovate's config validator itself. On macOS:
+Run `prek install` once. The hooks need `gitleaks`, `jq`, `tofu`, `shellcheck`, the `python3` that `.python-version` pins, and `bats` with its `bats-support` and `bats-assert` libraries. shellcheck is needed on `PATH` because actionlint checks the workflows' scripts only with it there; prek installs actionlint, the shellcheck hook, ruff, Pyrefly and Renovate's config validator itself. On macOS:
 
 ```sh
 brew install prek gitleaks jq opentofu shellcheck bats-core
@@ -112,4 +112,4 @@ brew trust --formula bats-core/bats-core/bats-assert
 brew install bats-support bats-assert
 ```
 
-The image and tf-quality tests are bats suites that run with the hooks, the tf-quality ones with real `tofu` on small modules that use only its built-in provider. The image integration suite in `image/tests/integration/` is bats too, but stays out of the hooks: it needs Docker, crane on PATH, a registry on `localhost:5000` and a docker-container builder as the current builder, which `.github/workflows/ci.yml` sets up.
+The image and tf-quality tests run with the hooks. `release-action`'s tests are Python and the rest are bats suites; the tf-quality ones run real `tofu` on small modules that use only its built-in provider. The image integration suite in `image/tests/integration/` is bats too, but stays out of the hooks: it needs Docker, crane on PATH, a registry on `localhost:5000` and a docker-container builder as the current builder, which `.github/workflows/ci.yml` sets up.

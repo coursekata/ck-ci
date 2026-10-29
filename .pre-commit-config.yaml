@@ -31,6 +31,21 @@ repos:
         files: ^(image|tf-quality)/
         types_or: [shell, bats]
 
+  # release-action's script and its tests.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/facebook/pyrefly-pre-commit
+    rev: 1.4.0
+    hooks:
+      # Checks the files pyrefly.toml lists. Both use only the standard library, so Pyrefly
+      # needs no other packages.
+      - id: pyrefly-check
+        files: ^image/(release-action|tests)/.*\.py$
+
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:
@@ -38,7 +53,7 @@ repos:
 
   - repo: local
     hooks:
-      # Both need bats with bats-support and bats-assert, found on BATS_LIB_PATH.
+      # The two bats suites need bats-support and bats-assert, found on BATS_LIB_PATH.
       - id: image-tests
         name: image unit tests
         entry: bats image/tests
@@ -55,3 +70,10 @@ repos:
         files: ^tf-quality/
         pass_filenames: false
         require_serial: true
+
+      - id: image-python-tests
+        name: release-action unit tests
+        entry: python3 -I -m unittest discover -s image/tests -p test_*.py
+        language: system
+        files: ^image/
+        pass_filenames: false

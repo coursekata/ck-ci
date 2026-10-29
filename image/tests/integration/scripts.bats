@@ -84,10 +84,9 @@ build_for_health() {
 # a change.
 same() {
   [ -n "$1" ] && [ -n "$2" ] || return 1
-  local built released
-  built=$("$SCRIPTS/lib/read-configs.sh" "$REG/release/cmp@$1") || return 1
-  released=$("$SCRIPTS/lib/read-configs.sh" "$REG/release/cmp@$2") || return 1
-  jq -L "$SCRIPTS/release-action" -r --argjson r "$released" 'include "release"; compare($r) | "unchanged=\(.unchanged)"' <<<"$built"
+  python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from release import compare, read_configs
+print(f"unchanged={str(compare(read_configs(sys.argv[2]), read_configs(sys.argv[3])).unchanged).lower()}")' \
+    "$SCRIPTS/release-action" "$REG/release/cmp@$1" "$REG/release/cmp@$2"
 }
 
 @test "a missing repository reads as empty; an unreachable registry is an error" {
@@ -275,7 +274,7 @@ release() {
   : >"$GITHUB_STEP_SUMMARY"
   GITHUB_SERVER_URL="file://$BATS_TEST_TMPDIR/git" GITHUB_REPOSITORY=acme/app GITHUB_REF=${REF:-refs/heads/main} \
     GITHUB_SHA=$1 GITHUB_RUN_ID=$2 CANDIDATE=$REG/release/cmp RELEASE=${TO:-$RELEASE} CACHE=${CACHE:-} CACHE_DIGEST=${CACHE_DIGEST:-} \
-    ALWAYS_UPDATE_CACHE=false TOKEN="" DIGEST=$3 TAGS="sha-$1"$'\n'"run-$2"$'\n'"v-$1" "$SCRIPTS/release-action/release.sh"
+    ALWAYS_UPDATE_CACHE=false TOKEN="" DIGEST=$3 TAGS="sha-$1"$'\n'"run-$2"$'\n'"v-$1" python3 -I "$SCRIPTS/release-action/release.py"
 }
 
 # names <tag>: the digest the tag names in this test's release repository, or nothing.
@@ -310,15 +309,20 @@ start_releasing() {
   assert_output "$SERVED"
 }
 
-@test "a build unchanged from the latest release releases nothing" {
+@test "a build unchanged from the latest release releases nothing, and its cache stays put" {
   start_releasing
-  local one two
+  local one two cache=$REG/cache/rel-$RUN-$BATS_TEST_NUMBER
+  run crane push "$WORK/cache" "$REG/release/cmp:cache"
+  assert_success
   one=$(merge)
   run release "$one" 1 "$SERVED"
   assert_success
   two=$(merge)
-  run release "$two" 2 "$SERVED_REBUILT"
+  CACHE=$cache CACHE_DIGEST=$FIXTURE_CACHE_DIGEST run release "$two" 2 "$SERVED_REBUILT"
   assert_success
+  run --separate-stderr "$SCRIPTS/lib/read-registry.sh" digest "$cache:current"
+  assert_success
+  assert_output ""
   run step_output released
   assert_output false
   run step_output digest
@@ -412,6 +416,34 @@ start_releasing() {
   assert_output "$SICK"
   run cat "$GITHUB_STEP_SUMMARY"
   assert_output --partial "Nothing was tagged with $SERVED_REBUILT"
+}
+
+@test "a write that fails stops the release there" {
+  start_releasing
+  local one missing
+  missing=sha256:$(printf '0%.0s' {1..64})
+  one=$(merge)
+  run release "$one" 1 "$missing"
+  assert_failure
+  assert_output --partial "::error::crane copy $REG/release/cmp@$missing $RELEASE:sha-$one failed, so the release stopped there."
+  run --separate-stderr "$SCRIPTS/lib/read-registry.sh" ls "$RELEASE"
+  assert_success
+  assert_output ""
+}
+
+@test "a build that cannot be read for comparison fails rather than release" {
+  start_releasing
+  local one two missing
+  missing=sha256:$(printf '0%.0s' {1..64})
+  one=$(merge)
+  run release "$one" 1 "$SERVED"
+  assert_success
+  two=$(merge)
+  run release "$two" 2 "$missing"
+  assert_failure
+  assert_output --partial "::error::Could not read the configs of $REG/release/cmp@$missing and $RELEASE@$SERVED to compare them"
+  run --separate-stderr names "sha-$two"
+  assert_output ""
 }
 
 @test "a registry that cannot be read fails rather than release" {

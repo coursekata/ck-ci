@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Runs as the hosted Renovate App. The spokes that extend this same preset run renovate.yml on their own token instead, because a bot pull request there would run a plan that holds cloud credentials. Nothing here logs in to a cloud, and the App's pull requests start CI at once, so they report the ci-passed check the main ruleset requires.",
   "extends": ["github>coursekata/ck-ci//renovate/default.json"],
-  "enabledManagers": ["pre-commit", "github-actions", "custom.regex"],
+  "enabledManagers": ["pre-commit", "github-actions", "pyenv", "custom.regex"],
   "pre-commit": { "managerFilePatterns": ["/^tf-quality/pre-commit-config\\.yaml$/"] },
   "customManagers": [
     {
@@ -20,6 +20,14 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "The Python .python-version pins, which setup-python installs in release-action and in CI. Looked up in the builds setup-python installs from, rather than the python image's tags, so a new release is proposed only once setup-python can install it and is dated by its build, not by the image's last rebuild.",
+      "matchManagers": ["pyenv"],
+      "overrideDatasource": "github-releases",
+      "overridePackageName": "actions/python-versions",
+      "extractVersion": "^(?<version>\\d+\\.\\d+\\.\\d+)-\\d+$",
+      "versioning": "semver"
+    },
     {
       "description": "The GitHub Actions manager is on only for the tool versions the setup actions take as inputs: buildx, tflint and trivy. Dependabot keeps every action SHA.",
       "matchManagers": ["github-actions"],

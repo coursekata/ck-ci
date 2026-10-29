@@ -1,0 +1,6 @@
+# release-action's script and its tests: the standard library on the Python .python-version pins.
+line-length = 120
+target-version = "py315"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
