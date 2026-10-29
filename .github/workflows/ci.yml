@@ -43,6 +43,7 @@ jobs:
           tofu_version: "1.12.2"
           tofu_wrapper: false
 
+      # The bats versions both jobs pin. Nothing moves them, so a change by hand changes both.
       - id: bats
         uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
         with:
@@ -87,8 +88,20 @@ jobs:
       - name: Install crane, as the actions do
         run: image/lib/install-crane.sh
 
+      # The bats versions both jobs pin. Nothing moves them, so a change by hand changes both.
+      - id: bats
+        uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+        with:
+          bats-version: 1.14.0
+          support-version: 0.3.0
+          assert-version: 2.2.4
+          detik-install: false
+          file-install: false
+
       - name: Run the image actions' scripts against real tools
-        run: image/tests/integration.sh
+        env:
+          BATS_LIB_PATH: ${{ steps.bats.outputs.lib-path }}
+        run: bats image/tests/integration
 
       # The actions themselves, on the fixture, so a template or an output that only a live run
       # evaluates fails here before any caller pins a release. bake resolves a bake file's paths
