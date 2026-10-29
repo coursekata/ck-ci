@@ -5,7 +5,7 @@ USER nobody
 # A build fixture, not a service: it runs no process to check.
 HEALTHCHECK NONE
 
-# runtime with a health check and no other change, for the comparison's integration step.
+# runtime with a health check and no other change, for the comparison's integration test.
 FROM runtime AS runtime-checked
 HEALTHCHECK --interval=1s CMD true
 

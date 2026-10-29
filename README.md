@@ -112,4 +112,4 @@ brew trust --formula bats-core/bats-core/bats-assert
 brew install bats-support bats-assert
 ```
 
-The image and tf-quality tests are bats suites that run with the hooks, the tf-quality ones with real `tofu` on small modules that use only its built-in provider. The image integration test, `image/tests/integration.sh`, needs Docker, a registry on `localhost:5000` and a docker-container builder as the current builder, which `.github/workflows/ci.yml` sets up.
+The image and tf-quality tests are bats suites that run with the hooks, the tf-quality ones with real `tofu` on small modules that use only its built-in provider. The image integration suite in `image/tests/integration/` is bats too, but stays out of the hooks: it needs Docker, crane on PATH, a registry on `localhost:5000` and a docker-container builder as the current builder, which `.github/workflows/ci.yml` sets up.
