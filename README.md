@@ -43,8 +43,10 @@ jobs:
   quality:
     uses: coursekata/ck-ci/.github/workflows/tf-quality.yml@vX.Y.Z
     with:
-      tofu_version: "1.12.2"
+      tofu_version: "<version>"
 ```
+
+Set `tofu_version` to the exact OpenTofu version the calling repository requires, or omit the input to use the default in the selected ck-ci release.
 
 **The bar's hooks run before a push too.** A repository copies the bar's hook config into its own `.pre-commit-config.yaml`, with ck-ci at the release it calls the workflow at, and Renovate's `pre-commit` manager moves both revs. The bar's own hooks take the file names prek passes, so on a commit they check only what it touches. `tofu test` runs on push instead, over every commit being pushed, since it takes tens of seconds in a large repository; `prek install` installs both hooks when the copy keeps the bar's `default_install_hook_types`, and a clone whose hooks were installed before needs `prek install` again. It runs every suite whose module tree, as `tofu get` resolves it, holds a changed file: a change inside a module runs the suite of every module that calls it, and no other. Given every file, as the workflow gives it, it runs every suite.
 
@@ -54,13 +56,16 @@ jobs:
   hooks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@<sha> # v7.0.1
-      - uses: j178/prek-action@<sha> # v3.0.0
+      - uses: actions/checkout@<sha>
+      - uses: j178/prek-action@<sha>
         env:
           SKIP: tofu-ban,tofu-testing-guard,terraform_fmt,terraform_validate,terraform_tflint,terraform_trivy,tofu-test,gitleaks-system
         with:
+          prek-version: "<version>"
           extra-args: --all-files
 ```
+
+Replace `<sha>` with each action's full commit SHA and `<version>` with an exact prek release chosen by the calling repository.
 
 A copy of the bar's hooks that drifts costs a red CI run, not a weaker bar.
 
