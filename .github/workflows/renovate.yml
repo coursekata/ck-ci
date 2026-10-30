@@ -58,7 +58,7 @@ jobs:
       # when no hostRules name a password, so the role's session is all it needs. The action
       # forwards only the variables its env-regex matches; with a role, the session's four join the
       # action's own default list (v46.3.0), and without one the default stands and nothing warns.
-      - uses: renovatebot/github-action@a63d9a7bc606f7336fd20b47f2f32259a35e6213 # v46.3.9
+      - uses: renovatebot/github-action@43b963bf5dd5e57f1f95c59765a018d782870211 # v46.3.11
         with:
           token: ${{ github.token }}
           env-regex: ${{ inputs.aws_role_arn != '' && '^(?:RENOVATE_\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|(?:HTTPS?|NO)_PROXY|(?:https?|no)_proxy|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|REGION))$' || '' }}

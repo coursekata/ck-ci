@@ -16,9 +16,9 @@ on:
   workflow_call:
     inputs:
       tofu_version:
-        description: "OpenTofu version to install (match the caller's .opentofu-version)."
+        description: "OpenTofu version to install for the calling repository."
         type: string
-        default: "1.12.2" # bump manually (not a Dependabot-tracked ecosystem)
+        default: "1.13.2" # bump manually (not a Dependabot-tracked ecosystem)
 
 permissions:
   contents: read
@@ -40,12 +40,12 @@ jobs:
       - name: Install tflint
         uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
         with:
-          tflint_version: v0.64.0
+          tflint_version: v0.65.0
 
       - name: Install trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: v0.76.0
+          version: v0.76.1
 
       # One provider cache for every directory's init, so a provider many directories use is
       # downloaded and unpacked once rather than once per directory on the runner's disk.
@@ -89,6 +89,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           cache: false
+          prek-version: "0.5.9"
           extra-args: --config ${{ runner.temp }}/tf-quality.yaml --stage pre-push --all-files
 
   # The general bar: the full-history secret scan and the CVE scan.
