@@ -19,8 +19,8 @@
       "groupName": "non-major dependencies"
     },
     {
-      "description": "Pre-1.0 minors can break, and Renovate still classes them minor, so the major gate above misses them. Ungrouped deliberately: bundled into the batch, one 0.x dependency would hold the whole group behind an approval. Not enabled:false — that is evaluated before updateType exists, so pairing it with matchUpdateTypes silently never matches.",
-      "matchCurrentValue": "/^v?0\\./",
+      "description": "Pre-1.0 minors can break, and Renovate still classes them minor, so the major gate above misses them. matchCurrentValue sees the raw manifest value, operator included, so the pattern admits a leading ^ or ~; without that, every npm caret range slipped into the non-major group. Ungrouped deliberately: bundled into the batch, one 0.x dependency would hold the whole group behind an approval. Not enabled:false — that is evaluated before updateType exists, so pairing it with matchUpdateTypes silently never matches.",
+      "matchCurrentValue": "/^[~^]?v?0\\./",
       "matchUpdateTypes": ["minor", "major"],
       "groupName": null,
       "dependencyDashboardApproval": true
