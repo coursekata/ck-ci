@@ -23,6 +23,9 @@ repos:
     rev: 44.57.2
     hooks:
       - id: renovate-config-validator
+        # The upstream pattern matches only files named renovate.json; the presets under renovate/
+        # are this repository's product, so they are validated too.
+        files: '(^|/)\.?renovate(?:rc)?(?:\.json[c5]?)?$|^renovate/.*\.json$'
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
