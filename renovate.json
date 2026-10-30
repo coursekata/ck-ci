@@ -29,9 +29,9 @@
       "versioning": "semver"
     },
     {
-      "description": "The GitHub Actions manager is on only for the tool versions the setup actions take as inputs: buildx, tflint and trivy. Dependabot keeps every action SHA.",
+      "description": "The GitHub Actions manager tracks only CLI versions taken by setup actions: buildx, tflint, trivy and prek. Dependabot keeps every action SHA.",
       "matchManagers": ["github-actions"],
-      "matchPackageNames": ["!docker/buildx", "!terraform-linters/tflint", "!aquasecurity/trivy"],
+      "matchPackageNames": ["!docker/buildx", "!terraform-linters/tflint", "!aquasecurity/trivy", "!j178/prek"],
       "enabled": false
     },
     {

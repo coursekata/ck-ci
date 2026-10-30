@@ -27,7 +27,7 @@ jobs:
   tf-quality:
     uses: ./.github/workflows/tf-quality.yml
     with:
-      tofu_version: "1.12.2"
+      tofu_version: "1.13.2"
 
   # The hooks, apart from gitleaks, whose full-history scan quality runs. OpenTofu and bats are here
   # for the test hooks.
@@ -45,7 +45,7 @@ jobs:
 
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
-          tofu_version: "1.12.2"
+          tofu_version: "1.13.2"
           tofu_wrapper: false
 
       # The bats versions both jobs pin. Nothing moves them, so a change by hand changes both.
@@ -63,6 +63,7 @@ jobs:
           SKIP: gitleaks-system
           BATS_LIB_PATH: ${{ steps.bats.outputs.lib-path }}
         with:
+          prek-version: "0.5.9"
           extra-args: --all-files
 
   image:
@@ -85,9 +86,9 @@ jobs:
       # one pull request; a change by hand changes them all.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.38.0
+          version: v0.38.1
           driver: docker-container
-          driver-opts: image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
+          driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
           cache-binary: false
 
       - name: Install crane, as the actions do
