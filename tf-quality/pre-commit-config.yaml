@@ -39,20 +39,9 @@ repos:
           - --hook-config=--tf-path=tofu
           - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
 
-  - repo: local
-    hooks:
-      # One scan from the root, so trivy reads .trivyignore itself and a repository without one
-      # still scans. Only OpenTofu misconfigurations, and none in the modules under .terraform, which
-      # their own repositories gate.
-      - id: terraform_trivy
-        name: trivy config
-        language: system
-        files: (\.(tf|tofu)(\.json)?|\.tfvars)$
-        pass_filenames: false
-        entry: trivy config --exit-code 1 --misconfig-scanners terraform --skip-dirs '**/.terraform' .
-
   - repo: https://github.com/coursekata/ck-ci
     rev: v0.1.0
     hooks:
+      - id: terraform_trivy
       - id: tofu-test
         stages: [pre-push]
